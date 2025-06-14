@@ -1,0 +1,8 @@
+[grid]
+hidden_dim            = [128, 256, 512]
+# num_transformer_heads = [2, 4, 8]
+# tr_layer_number       = [1, 2, 3, 4]
+# out_features          = [128, 256, 512]
+
+[defaults]
+hidden_dim = 512
