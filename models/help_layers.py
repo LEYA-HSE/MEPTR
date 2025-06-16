@@ -70,7 +70,7 @@ class TransformerEncoderLayer(nn.Module):
         self.add_norm_after_ff = AddAndNorm(input_dim, dropout=dropout)
         self.positional_encoding = PositionalEncoding(input_dim) if positional_encoding else None
 
-    def forward(self, key, value, query):
+    def forward(self, query, key, value):
         if self.positional_encoding:
             key = self.positional_encoding(key)
             value = self.positional_encoding(value)
