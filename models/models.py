@@ -52,24 +52,30 @@ class EmotionPersonalityModel(nn.Module):
         self.tr_layer_number = tr_layer_number
         self.mamba_layer_number = mamba_layer_number
 
-
         self.emotion_fc_out = nn.Sequential(
-            nn.Linear(hidden_dim, num_emotions),
-            nn.LayerNorm(num_emotions),
-            nn.Dropout(dropout)
+            nn.Linear(hidden_dim, out_features),
+            nn.LayerNorm(out_features),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(out_features, num_emotions)
         )
 
         self.personality_fc_out = nn.Sequential(
-            nn.Linear(hidden_dim, num_traits),
-            nn.LayerNorm(num_traits),
-            nn.Dropout(dropout)
+            nn.Linear(hidden_dim, out_features),
+            nn.LayerNorm(out_features),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(out_features, num_traits)
         )
 
         self.emotion_personality_fc_out = nn.Sequential(
-            nn.Linear(hidden_dim*2, num_traits+num_emotions),
-            nn.LayerNorm(num_traits+num_emotions),
-            nn.Dropout(dropout)
+            nn.Linear(hidden_dim, out_features),
+            nn.LayerNorm(out_features),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(out_features, num_traits+num_emotions)
         )
+        
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, emotion_input=None, personality_input=None, mode='emotion'):
