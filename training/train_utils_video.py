@@ -370,6 +370,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
         input_dim_emotion     = config.image_embedding_dim,
         input_dim_personality = config.image_embedding_dim,
         hidden_dim            = config.hidden_dim,
+        out_features          = config.out_features,
         tr_layer_number       = config.tr_layer_number,
         num_transformer_heads = config.num_transformer_heads,
         positional_encoding   = config.positional_encoding,
