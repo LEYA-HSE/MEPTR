@@ -6,7 +6,7 @@ from .help_layers import TransformerEncoderLayer
 from data_loading.pretrained_extractors import CustomMambaBlock
 
 class EmotionPersonalityModel(nn.Module):
-    def __init__(self, input_dim_emotion=512, input_dim_personality=512, hidden_dim=128, mamba_layer_number=2, mamba_d_model=256, positional_encoding=True, num_transformer_heads=4, tr_layer_number=1, dropout=0.1, num_emotions=7, num_traits=5, device='cpu'):
+    def __init__(self, input_dim_emotion=512, input_dim_personality=512, hidden_dim=128, out_features=512, mamba_layer_number=2, mamba_d_model=256, positional_encoding=True, num_transformer_heads=4, tr_layer_number=1, dropout=0.1, num_emotions=7, num_traits=5, device='cpu'):
         super().__init__()
 
         self.emo_proj = nn.Sequential(
