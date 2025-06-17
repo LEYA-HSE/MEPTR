@@ -679,7 +679,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
             name = 'fiv2'
             loader = dev_loaders[name]
             d_loss, d_acc, d_ccc = run_per_eval(
-                    model, loader, criterion, device
+                    model, loader, criterion, device, model_stage
                 )
             dev_means.extend([d_acc, d_ccc])
             dev_metrics = {
@@ -772,7 +772,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
             name = 'fiv2'
             loader = test_loaders[name]
             t_loss, t_acc, t_ccc = run_per_eval(
-                    model, loader, criterion, device
+                    model, loader, criterion, device, model_stage
                 )
             test_means.extend([t_acc, t_ccc])
             test_metrics = {
