@@ -13,7 +13,7 @@ from transformers import (
     AutoModelForAudioClassification,
     Wav2Vec2Processor
 )
-from torchvision.models import resnet18, ResNet18_Weights
+from torchvision.models import resnet18, ResNet18_Weights, resnet50, ResNet50_Weights
 from data_loading.pretrained_extractors import EmotionModel, get_model_mamba, Mamba
 
 
@@ -429,6 +429,13 @@ class PretrainedImageEmbeddingExtractor:
         if self.image_model_type == "resnet18":
             weights = ResNet18_Weights.IMAGENET1K_V1
             self.model = resnet18(weights=weights).to(self.device)
+            self.model.eval()
+            self.features = nn.Sequential(*list(self.model.children())[:-config.cut_target_layer])
+            self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+
+        elif self.image_model_type == "resnet50":
+            weights = ResNet50_Weights.IMAGENET1K_V1
+            self.model = resnet50(weights=weights).to(self.device)
             self.model.eval()
             self.features = nn.Sequential(*list(self.model.children())[:-config.cut_target_layer])
             self.avgpool = nn.AdaptiveAvgPool2d((1, 1))

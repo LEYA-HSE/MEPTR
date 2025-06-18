@@ -17,7 +17,7 @@ from torch.nn.utils.rnn import pad_sequence
 
 from utils.losses import MultiTaskLoss
 from utils.measures import uar, mf1, acc_func, ccc
-from models.models import (EmotionPersonalityModel
+from models.models import (EmotionPersonalityModel,EmotionPersonalityModel_v2
 )
 from utils.schedulers import SmartScheduler
 from data_loading.dataset_multimodal import DatasetVideo
@@ -71,9 +71,13 @@ def freeze_all_but_cross_and_multitask(model):
     freeze_module(model.personality_encoder)
     freeze_module(model.personality_fc_out)
 
+    unfreeze_module(model.per_pre_proj)
+    unfreeze_module(model.emo_pre_proj)
     unfreeze_module(model.emotion_to_personality_attn)
     unfreeze_module(model.personality_to_emotion_attn)
-    unfreeze_module(model.emotion_personality_fc_out)
+    # unfreeze_module(model.emotion_personality_fc_out)
+    # unfreeze_module(model.personality_emotion_fc_out)
+    unfreeze_module(model.fusion_fc_out)
 
 def pad_to(x, target_size):
     n_repeat = target_size - x.size(0)
@@ -254,7 +258,7 @@ def run_emo_eval(model, loader, criterion, device="cuda", mode = "emotion"):
 
             # preds = logits['emotion_logits'].argmax(dim=1)
             # target = labels.argmax(dim=1)
-            preds, target =  process_predictions(logits['emotion_logits'], labels)
+            preds, target = process_predictions(logits['emotion_logits'], labels)
             total_preds.extend(preds)
             total_targets.extend(target)
 
@@ -362,6 +366,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
 
     dict_models = {
         "EmotionPersonalityModel": EmotionPersonalityModel,
+        "EmotionPersonalityModel_v2": EmotionPersonalityModel_v2,
     }
 
     model_cls = dict_models[config.model_name]
@@ -381,6 +386,23 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
         num_traits            = 5,
         device                = device
         ).to(device)
+    
+    # state = torch.load("results_emotionpersonalitymodel_2025-06-16_16-08-11/metrics_by_epoch/metrics_epochlog_EmotionPersonalityModel_combo5_20250616_161418_timestamp/best_model_dev.pt", map_location=device)
+    # state_dict = torch.load(state)
+    state = torch.load("results_emotionpersonalitymodel_2025-06-16_17-02-56/metrics_by_epoch/metrics_epochlog_EmotionPersonalityModel_combo24_20250616_171404_timestamp/best_model_dev.pt", map_location=device)
+    prefixes_to_exclude = [
+        'emotion_personality_fc_out',
+        'emotion_to_personality_attn',
+        'personality_to_emotion_attn'
+    ]
+    filtered_state_dict = {
+        k: v for k, v in state.items()
+        if not any(k.startswith(prefix) for prefix in prefixes_to_exclude)
+    }
+    _, _ = model.load_state_dict(filtered_state_dict, strict=False)
+    
+    # model.load_state_dict(state)
+    # print(model)    
 
     # Оптимизатор и лосс
     if config.optimizer == "adam":
@@ -810,7 +832,8 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
 
             if config.save_best_model:
                 dev_str = f"{mean_target:.4f}".replace(".", "_")
-                model_path = os.path.join(checkpoint_dir, f"best_model_dev_{dev_str}_epoch_{epoch}.pt")
+                model_path = os.path.join(checkpoint_dir, f"best_model_dev.pt")
+                # model_path = os.path.join(checkpoint_dir, f"best_model_dev_{dev_str}_epoch_{epoch}.pt")
                 torch.save(model.state_dict(), model_path)
                 logging.info(f"💾 Модель сохранена по лучшему dev (эпоха {epoch}): {model_path}")
         else:

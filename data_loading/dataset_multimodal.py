@@ -144,7 +144,7 @@ class DatasetVideo(Dataset):
                 ttransform = transforms.Compose(
                     [transforms.PILToTensor(), PreprocessInput()]
                 )
-            else:  # 'resnet18'
+            else:  # 'resnet18' "resnet50'
                 ttransform = transforms.Compose(
                     [
                         transforms.ToTensor(),
@@ -212,15 +212,15 @@ class DatasetVideo(Dataset):
                         curr_fr = self.pth_processing(Image.fromarray(curr_fr))
                         all_frames.append(curr_fr)
 
-                        self.draw_box(im0, [bbox[0], bbox[1], bbox[2], bbox[3]])
+                        # self.draw_box(im0, [bbox[0], bbox[1], bbox[2], bbox[3]])
                 else:
                     curr_fr = im0
                     curr_fr = self.pth_processing(Image.fromarray(curr_fr))
                     all_frames.append(curr_fr)
             counter += 1
 
-            plt.imshow(im0)
-            plt.show()
+            # plt.imshow(im0)
+            # plt.show()
         cap.release()
         
         if self.roi_video == 'body':

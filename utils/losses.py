@@ -262,7 +262,8 @@ class MultiTaskLoss(nn.Module):
                 loss_per = 0.0
                 for i in range(5):  # по каждому из 5 признаков
                     loss_per += self.personality_loss(true_personality[:, i], pred_personality[:, i])
-                loss += (loss_per / 5.0) * self.weight_personality
+                loss += (loss_per) * self.weight_personality
+                # loss += (loss_per / 5.0) * self.weight_personality
             else:
                 loss += self.weight_personality * self.personality_loss(true_personality, pred_personality)
 
