@@ -75,9 +75,9 @@ def freeze_all_but_cross_and_multitask(model):
     unfreeze_module(model.emo_pre_proj)
     unfreeze_module(model.emotion_to_personality_attn)
     unfreeze_module(model.personality_to_emotion_attn)
-    # unfreeze_module(model.emotion_personality_fc_out)
-    # unfreeze_module(model.personality_emotion_fc_out)
-    unfreeze_module(model.fusion_fc_out)
+    unfreeze_module(model.emotion_personality_fc_out)
+    unfreeze_module(model.personality_emotion_fc_out)
+    # unfreeze_module(model.fusion_fc_out)
 
 def pad_to(x, target_size):
     n_repeat = target_size - x.size(0)
@@ -395,7 +395,10 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
         prefixes_to_exclude = [
             'emotion_personality_fc_out',
             'emotion_to_personality_attn',
-            'personality_to_emotion_attn'
+            'personality_to_emotion_attn',
+            'fusion_fc_out',
+            'per_pre_proj',
+            'emo_pre_proj'
         ]
         filtered_state_dict = {
             k: v for k, v in state.items()

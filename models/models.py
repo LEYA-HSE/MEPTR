@@ -191,6 +191,7 @@ class EmotionPersonalityModel_v2(nn.Module):
         super().__init__()
 
         hidden_dim_emo = hidden_dim
+        out_features_emo = out_features
 
         self.emo_proj = nn.Sequential(
             nn.Linear(input_dim_emotion, hidden_dim_emo),
@@ -254,11 +255,11 @@ class EmotionPersonalityModel_v2(nn.Module):
         # )
 
         self.emotion_fc_out = nn.Sequential(
-            nn.Linear(hidden_dim_emo, hidden_dim_emo),
-            nn.LayerNorm(hidden_dim_emo),
+            nn.Linear(hidden_dim_emo, out_features_emo),
+            nn.LayerNorm(out_features_emo),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim_emo, num_emotions)
+            nn.Linear(out_features_emo, num_emotions)
         )
 
         # self.personality_fc_out = nn.Sequential(
@@ -268,11 +269,11 @@ class EmotionPersonalityModel_v2(nn.Module):
         # )
 
         self.personality_fc_out = nn.Sequential(
-            nn.Linear(hidden_dim_emo, hidden_dim_emo),
-            nn.LayerNorm(hidden_dim_emo),
+            nn.Linear(hidden_dim_emo, out_features_emo),
+            nn.LayerNorm(out_features_emo),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim_emo, num_traits)
+            nn.Linear(out_features_emo, num_traits)
         )
 
         # self.emotion_personality_fc_out = nn.Sequential(
