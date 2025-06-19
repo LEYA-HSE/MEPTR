@@ -386,21 +386,22 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
         num_traits            = 5,
         device                = device
         ).to(device)
-    
-    # state = torch.load("results_emotionpersonalitymodel_2025-06-16_16-08-11/metrics_by_epoch/metrics_epochlog_EmotionPersonalityModel_combo5_20250616_161418_timestamp/best_model_dev.pt", map_location=device)
-    # state_dict = torch.load(state)
-    state = torch.load("results_emotionpersonalitymodel_2025-06-16_17-02-56/metrics_by_epoch/metrics_epochlog_EmotionPersonalityModel_combo24_20250616_171404_timestamp/best_model_dev.pt", map_location=device)
-    prefixes_to_exclude = [
-        'emotion_personality_fc_out',
-        'emotion_to_personality_attn',
-        'personality_to_emotion_attn'
-    ]
-    filtered_state_dict = {
-        k: v for k, v in state.items()
-        if not any(k.startswith(prefix) for prefix in prefixes_to_exclude)
-    }
-    _, _ = model.load_state_dict(filtered_state_dict, strict=False)
-    
+    if model_stage == 'personality':
+        state = torch.load(config.path_to_saved_emotion_model, map_location=device)
+        model.load_state_dict(state)
+    elif model_stage == 'fusion':
+        state = torch.load(config.path_to_saved_personality_model, map_location=device)
+        # в prefixes_to_exclude указываем названия слоев, которые не надо перенесить с предыдущей модели, т.к. меняются параметры модели
+        prefixes_to_exclude = [
+            'emotion_personality_fc_out',
+            'emotion_to_personality_attn',
+            'personality_to_emotion_attn'
+        ]
+        filtered_state_dict = {
+            k: v for k, v in state.items()
+            if not any(k.startswith(prefix) for prefix in prefixes_to_exclude)
+        }
+        _, _ = model.load_state_dict(filtered_state_dict, strict=False)
     # model.load_state_dict(state)
     # print(model)    
 
