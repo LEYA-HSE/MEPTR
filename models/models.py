@@ -261,10 +261,10 @@ class FusionTransformer(nn.Module):
         per_emd = self.per_proj(per_features['last_encoder_features'])
 
         for layer in self.emotion_to_personality_attn:
-            emo_emd += layer(per_emd, emo_emd, emo_emd)
+            emo_emd += layer(emo_emd, per_emd, per_emd) # or per_emd, emo_emd, emo_emd
 
         for layer in self.personality_to_emotion_attn:
-            per_emd += layer(emo_emd, per_emd, per_emd)
+            per_emd += layer(per_emd, emo_emd, emo_emd) # or emo_emd, per_emd, per_emd
 
         fused = torch.cat([emo_emd, per_emd], dim=-1)
         emotion_logits = self.emotion_personality_fc_out(fused.mean(dim=1))
