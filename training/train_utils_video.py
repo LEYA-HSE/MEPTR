@@ -17,7 +17,12 @@ from torch.nn.utils.rnn import pad_sequence
 
 from utils.losses import MultiTaskLoss
 from utils.measures import uar, mf1, acc_func, ccc
-from models.models import (EmotionPersonalityModel,EmotionPersonalityModel_v2
+from models.models import (
+EmotionMamba,
+PersonalityMamba,
+EmotionTransformer,
+PersonalityTransformer,
+FusionTransformer
 )
 from utils.schedulers import SmartScheduler
 from data_loading.dataset_multimodal import DatasetVideo
@@ -35,49 +40,6 @@ def freeze_module(module):
 def unfreeze_module(module):
     for param in module.parameters():
         param.requires_grad = True
-
-def freeze_all_but_emotion(model):
-    freeze_module(model.per_proj)
-    freeze_module(model.personality_encoder)
-    freeze_module(model.personality_fc_out)
-
-    unfreeze_module(model.emo_proj)
-    unfreeze_module(model.emotion_encoder)
-    unfreeze_module(model.emotion_fc_out)
-
-    freeze_module(model.emotion_to_personality_attn)
-    freeze_module(model.personality_to_emotion_attn)
-    freeze_module(model.emotion_personality_fc_out)
-
-def freeze_all_but_personality(model):
-    freeze_module(model.emo_proj)
-    freeze_module(model.emotion_encoder)
-    freeze_module(model.emotion_fc_out)
-
-    unfreeze_module(model.per_proj)
-    unfreeze_module(model.personality_encoder)
-    unfreeze_module(model.personality_fc_out)
-
-    freeze_module(model.emotion_to_personality_attn)
-    freeze_module(model.personality_to_emotion_attn)
-    freeze_module(model.emotion_personality_fc_out)
-
-def freeze_all_but_cross_and_multitask(model):
-    freeze_module(model.emo_proj)
-    freeze_module(model.emotion_encoder)
-    freeze_module(model.emotion_fc_out)
-
-    freeze_module(model.per_proj)
-    freeze_module(model.personality_encoder)
-    freeze_module(model.personality_fc_out)
-
-    unfreeze_module(model.per_pre_proj)
-    unfreeze_module(model.emo_pre_proj)
-    unfreeze_module(model.emotion_to_personality_attn)
-    unfreeze_module(model.personality_to_emotion_attn)
-    unfreeze_module(model.emotion_personality_fc_out)
-    unfreeze_module(model.personality_emotion_fc_out)
-    # unfreeze_module(model.fusion_fc_out)
 
 def pad_to(x, target_size):
     n_repeat = target_size - x.size(0)
@@ -247,9 +209,9 @@ def run_emo_eval(model, loader, criterion, device="cuda", mode = "emotion"):
             video  = batch["video"].to(device)      # shape: (B, D, F)
 
             if mode == "emotion":
-                logits = model(emotion_input=video, mode=mode)
+                logits = model(emotion_input=video)
             elif mode == "fusion":
-                logits = model(emotion_input=video, personality_input=video, mode=mode)
+                logits = model(emotion_input=video, personality_input=video)
             loss = criterion({"emotion_logits": logits["emotion_logits"]}, {'emotion': labels})
 
             bs = video.shape[0]
@@ -287,9 +249,9 @@ def run_per_eval(model, loader, criterion, device="cuda", mode="personality"):
             labels = batch["label"].to(device)      # shape: (B, 7)
             video  = batch["video"].to(device)      # shape: (B, D, F)
             if mode == "personality":
-                logits = model(personality_input=video, mode=mode)
+                logits = model(personality_input=video)
             elif mode == "fusion":
-                logits = model(emotion_input=video, personality_input=video, mode=mode)
+                logits = model(emotion_input=video, personality_input=video)
             loss = criterion({"personality_scores": logits["personality_scores"]}, {'personality': labels})
 
             bs = video.shape[0]
@@ -365,48 +327,94 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
     scheduler_type        = config.scheduler_type
 
     dict_models = {
-        "EmotionPersonalityModel": EmotionPersonalityModel,
-        "EmotionPersonalityModel_v2": EmotionPersonalityModel_v2,
+        "EmotionMamba": EmotionMamba,
+        "PersonalityMamba": PersonalityMamba,
+        "EmotionTransformer": EmotionTransformer,
+        "PersonalityTransformer": PersonalityTransformer,
+        "FusionTransformer": FusionTransformer
     }
 
     model_cls = dict_models[config.model_name]
 
-    model = model_cls(
+    if model_stage != 'fusion':
+        model = model_cls(
+            input_dim_emotion     = config.image_embedding_dim,
+            input_dim_personality = config.image_embedding_dim,
+            hidden_dim            = config.hidden_dim,
+            out_features          = config.out_features,
+            per_activation        = config.per_activation,
+            tr_layer_number       = config.tr_layer_number,
+            num_transformer_heads = config.num_transformer_heads,
+            positional_encoding   = config.positional_encoding,
+            mamba_d_model         = config.mamba_d_state,
+            mamba_layer_number    = config.mamba_layer_number,
+            dropout               = config.dropout,
+            num_emotions          = 7,
+            num_traits            = 5,
+            device                = device
+            ).to(device)
+    if model_stage == 'fusion':
+        # параметры задаем для лучшей эмоциональной модели
+        model_cls = dict_models[config.name_best_emo_model]
+        emo_model = model_cls(
         input_dim_emotion     = config.image_embedding_dim,
         input_dim_personality = config.image_embedding_dim,
-        hidden_dim            = config.hidden_dim,
-        out_features          = config.out_features,
-        tr_layer_number       = config.tr_layer_number,
-        num_transformer_heads = config.num_transformer_heads,
-        positional_encoding   = config.positional_encoding,
-        mamba_d_model         = config.mamba_d_state,
-        mamba_layer_number    = config.mamba_layer_number,
+        hidden_dim            = config.hidden_dim_emo,
+        out_features          = config.out_features_emo,
+        tr_layer_number       = config.tr_layer_number_emo,
+        num_transformer_heads = config.num_transformer_heads_emo,
+        positional_encoding   = config.positional_encoding_emo,
+        mamba_d_model         = config.mamba_d_state_emo,
+        mamba_layer_number    = config.mamba_layer_number_emo,
         dropout               = config.dropout,
         num_emotions          = 7,
         num_traits            = 5,
         device                = device
         ).to(device)
-    if model_stage == 'personality':
-        state = torch.load(config.path_to_saved_emotion_model, map_location=device)
-        model.load_state_dict(state)
-    elif model_stage == 'fusion':
-        state = torch.load(config.path_to_saved_personality_model, map_location=device)
-        # в prefixes_to_exclude указываем названия слоев, которые не надо перенесить с предыдущей модели, т.к. меняются параметры модели
-        prefixes_to_exclude = [
-            'emotion_personality_fc_out',
-            'emotion_to_personality_attn',
-            'personality_to_emotion_attn',
-            'fusion_fc_out',
-            'per_pre_proj',
-            'emo_pre_proj'
-        ]
-        filtered_state_dict = {
-            k: v for k, v in state.items()
-            if not any(k.startswith(prefix) for prefix in prefixes_to_exclude)
-        }
-        _, _ = model.load_state_dict(filtered_state_dict, strict=False)
-    # model.load_state_dict(state)
-    # print(model)    
+        # параметры задаем для лучшей персональной модели
+        model_cls = dict_models[config.name_best_per_model]
+        per_model = model_cls(
+        input_dim_emotion     = config.image_embedding_dim,
+        input_dim_personality = config.image_embedding_dim,
+        hidden_dim            = config.hidden_dim_per,
+        out_features          = config.out_features_per,
+        per_activation        = config.best_per_activation,
+        tr_layer_number       = config.tr_layer_number_per,
+        num_transformer_heads = config.num_transformer_heads_per,
+        positional_encoding   = config.positional_encoding_per,
+        mamba_d_model         = config.mamba_d_state_per,
+        mamba_layer_number    = config.mamba_layer_number_per,
+        dropout               = config.dropout,
+        num_emotions          = 7,
+        num_traits            = 5,
+        device                = device
+        ).to(device)
+
+        emo_state = torch.load(config.path_to_saved_emotion_model, map_location=device)
+        emo_model.load_state_dict(emo_state)
+
+        emo_state = torch.load(config.path_to_saved_personality_model, map_location=device)
+        per_model.load_state_dict(emo_state)
+
+        model_cls = dict_models[config.model_name]
+        model = model_cls(
+            emo_model             = emo_model,
+            per_model             = per_model,
+            input_dim_emotion     = config.image_embedding_dim,
+            input_dim_personality = config.image_embedding_dim,
+            hidden_dim            = config.hidden_dim,
+            out_features          = config.out_features,
+            per_activation        = config.per_activation,
+            tr_layer_number       = config.tr_layer_number,
+            num_transformer_heads = config.num_transformer_heads,
+            positional_encoding   = config.positional_encoding,
+            mamba_d_model         = config.mamba_d_state,
+            mamba_layer_number    = config.mamba_layer_number,
+            dropout               = config.dropout,
+            num_emotions          = 7,
+            num_traits            = 5,
+            device                = device
+            ).to(device)
 
     # Оптимизатор и лосс
     if config.optimizer == "adam":
@@ -457,9 +465,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
         model.train()
 
         if model_stage == 'emotion':
-            # print(111)
             dataloader = train_loaders['cmu_mosei']
-            freeze_all_but_emotion(model)
 
             total_loss = 0.0
             total_samples = 0
@@ -473,7 +479,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
                 inputs  = batch['video'].to(device)
                 labels = batch['label'].to(device).type(torch.float32)
 
-                outputs = model(emotion_input=inputs, mode=model_stage)
+                outputs = model(emotion_input=inputs)
                 loss = criterion(outputs, {"emotion": labels})
 
                 loss.backward()
@@ -505,7 +511,6 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
         elif model_stage == 'personality':
             # print(222)
             dataloader = train_loaders['fiv2']
-            freeze_all_but_personality(model)
 
             total_loss = 0.0
             total_samples = 0
@@ -519,7 +524,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
                 inputs  = batch['video'].to(device)
                 labels = batch['label'].to(device)
 
-                outputs = model(personality_input=inputs, mode=model_stage)
+                outputs = model(personality_input=inputs)
                 loss = criterion(outputs, {"personality": labels})
 
                 loss.backward()
@@ -550,7 +555,6 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
             
         elif model_stage == 'fusion':
             # print(333)
-            freeze_all_but_cross_and_multitask(model)
 
             total_loss = 0.0
             total_samples = 0
@@ -588,7 +592,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
                         pers_input = pad_to(pers_input, max_bs)
                         pers_labels = pad_to(pers_labels, max_bs)
                 
-                outputs = model(emotion_input=emo_input, personality_input=pers_input, mode = model_stage)
+                outputs = model(emotion_input=emo_input, personality_input=pers_input)
                 loss = criterion(outputs, {'emotion': emo_labels, 'personality': pers_labels})
                 loss.backward()
                 optimizer.step()

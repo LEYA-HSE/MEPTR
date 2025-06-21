@@ -97,6 +97,7 @@ class ConfigLoader:
         self.model_stage = train_model.get("model_stage", "emotion")
         self.path_to_saved_emotion_model = train_model.get("path_to_saved_emotion_model", None)
         self.path_to_saved_personality_model = train_model.get("path_to_saved_personality_model", None)
+        self.per_activation = train_model.get("per_activation", "sigmoid")
         self.weight_emotion = train_model.get("weight_emotion", 0.1)
         self.weight_pers = train_model.get("weight_pers", 1)
         self.pers_loss_type = train_model.get("pers_loss_type", True)
@@ -114,6 +115,27 @@ class ConfigLoader:
         self.out_features = train_model.get("out_features", 128)
         self.mode = train_model.get("mode", "mean")
         self.fusion_dim = train_model.get("fusion_dim", 64)
+        
+        # параметры для лучших эмоциональной и персональной моделей
+        self.hidden_dim_emo = train_model.get("hidden_dim_emo", 256)
+        self.out_features_emo = train_model.get("out_features_emo", 256)
+        self.name_best_emo_model = train_model.get("name_best_emo_model", "BiFormer")
+        self.name_best_per_model = train_model.get("name_best_per_model", "BiFormer")
+        self.path_to_saved_emotion_model = train_model.get("path_to_saved_emotion_model", None)
+        self.path_to_saved_personality_model = train_model.get("path_to_saved_personality_model", None)
+        self.num_transformer_heads_emo = train_model.get("num_transformer_heads_emo", 8)
+        self.tr_layer_number_emo = train_model.get("tr_layer_number_emo", 1)
+        self.positional_encoding_emo = train_model.get("positional_encoding_emo", True)
+        self.mamba_d_state_emo = train_model.get("mamba_d_state_emo", 16)
+        self.mamba_layer_number_emo = train_model.get("mamba_layer_number_emo", 3)
+        self.hidden_dim_per = train_model.get("hidden_dim_per", 256)
+        self.out_features_per = train_model.get("out_features_per", 256)
+        self.num_transformer_heads_per = train_model.get("num_transformer_heads_per", 8)
+        self.tr_layer_number_per = train_model.get("tr_layer_number_per", 1)
+        self.positional_encoding_per = train_model.get("positional_encoding_per", True)
+        self.mamba_d_state_per = train_model.get("mamba_d_state_per", 16)
+        self.mamba_layer_number_per = train_model.get("mamba_layer_number_per", 3)
+        self.best_per_activation = train_model.get("best_per_activation", "sigmoid")
 
         # ---------------------------
         # Тренировка: оптимизатор

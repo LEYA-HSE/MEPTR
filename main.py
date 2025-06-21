@@ -15,7 +15,7 @@ from training.train_utils_video import (
     make_dataset_and_loader,
     train_once
 )
-from data_loading.feature_extractor import PretrainedAudioEmbeddingExtractor, PretrainedTextEmbeddingExtractor, PretrainedImageEmbeddingExtractor
+from data_loading.feature_extractor import PretrainedImageEmbeddingExtractor
 
 def main():
 
