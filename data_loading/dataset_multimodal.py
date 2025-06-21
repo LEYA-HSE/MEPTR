@@ -185,7 +185,7 @@ class DatasetVideo(Dataset):
 
     def get_data(self, segment_name):
 
-        curr_data = self.df[self.df.filename==segment_name] # отбираем все строки нужного сегмента видео
+        curr_data = self.df[self.df.filename == segment_name] # отбираем все строки нужного сегмента видео
         curr_data = curr_data.dropna() # убераем кадры где не найдено лица
 
         label_vec = curr_data[self.label_columns].values[0]
@@ -249,9 +249,7 @@ class DatasetVideo(Dataset):
             all_frames = torch.cat(all_frames, dim=0)
             video_features = self.image_feature_extractor.extract(all_frames).to('cpu')
 
-
         torch.cuda.empty_cache()
-        
 
         return {
             "video_path": full_path_video,
@@ -266,10 +264,7 @@ class DatasetVideo(Dataset):
 
         for idx, segment_name in enumerate(tqdm(self.need_segment_name)):
             curr_dict = self.get_data(segment_name)
-
-            self.meta.append(
-            curr_dict
-            )
+            self.meta.append(curr_dict)
 
     def __getitem__(self, index):
         if self.save_prepared_data:

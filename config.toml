@@ -4,13 +4,13 @@
 
 [datasets.cmu_mosei]
 task = "emotions"
-base_dir = "D:/Databases/CMU-MOSEI/video/"
+base_dir = "/home/serg_fedchn/LEYA/EAAI_2025/Datasets/CMU-MOSEI"
 csv_path = "{base_dir}/{split}_body_union.csv"
 video_dir  = "{base_dir}/{split}/"
 
 [datasets.fiv2]
 task = "personality_traits"
-base_dir = "E:/Databases/FirstImpressionsV2/"
+base_dir = "/home/serg_fedchn/LEYA/EAAI_2025/Datasets/FirstImpressionsV2"
 csv_path = "{base_dir}/{split}_body_union.csv"
 video_dir  = "{base_dir}/{split}/"
 
@@ -41,8 +41,8 @@ opt_set = 'dev'                   # набор для оптимизации п�
 # Параметры модели
 # ---------------------------
 [train.model]
-model_name            = "FusionTransformer" # название модели
-model_stage           = 'fusion' # название этапа personality, emotion, fusion
+model_name            = "EmotionMamba" # название модели
+model_stage           = 'emotion' # название этапа personality, emotion, fusion
 per_activation        = "relu"   # sigmoid
 weight_emotion        = 0.1      # для корректировки лосса эмоций 0.1 при взвешивании классов, 1.0 без взвешивания
 weight_pers           = 1        # для корректировки лосса персональных качеств
@@ -95,12 +95,12 @@ warmup_ratio = 0.1         # отношение количества warmup-ит
 
 [embeddings]
 image_classifier_checkpoint = "torchscript_model_0_66_37_wo_gl.pth"
-image_model_type = "emo"  # resnet18, emo, емоresnet50, resnet50, clip
-image_embedding_dim = 512 # 2048 (емоresnet50, resnet50) и 512 (resnet18, emo, clip) размерность видео-эмбеддинга
-cut_target_layer = 2      # 4 (емоresnet50) и 2 (resnet18, resnet50) и 3 (emo) слой до какого обрезать модель и извлечь фичи
-roi_video = "body"        # область интереса или либо body или вся scene
-counter_need_frames = 30  # сколько кадров отобрать из всех возможных с равномерным шагом
-image_size = 224          # ширина и высота изображения
-emb_normalize = false     # нормализовать ли вектор L2-нормой
-device = "cuda"           # "cuda" или "cpu", куда грузить модел
+image_model_type = "clip"  # resnet18, emo, емоresnet50, resnet50, clip
+image_embedding_dim = 512  # 2048 (емоresnet50, resnet50) и 512 (resnet18, emo, clip) размерность видео-эмбеддинга
+cut_target_layer = 2       # 4 (емоresnet50) и 2 (resnet18, resnet50) и 3 (emo) слой до какого обрезать модель и извлечь фичи
+roi_video = "scene"        # область интереса или либо body или вся scene
+counter_need_frames = 30   # сколько кадров отобрать из всех возможных с равномерным шагом
+image_size = 224           # ширина и высота изображения
+emb_normalize = false      # нормализовать ли вектор L2-нормой
+device = "cuda"            # "cuda" или "cpu", куда грузить модел
 
