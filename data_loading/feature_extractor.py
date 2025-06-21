@@ -16,6 +16,7 @@ from transformers import (
 from torchvision.models import resnet18, ResNet18_Weights, resnet50, ResNet50_Weights
 from data_loading.pretrained_extractors import EmotionModel, get_model_mamba, Mamba
 
+from transformers import CLIPModel
 
 class PretrainedAudioEmbeddingExtractor:
     """
@@ -460,6 +461,9 @@ class PretrainedImageEmbeddingExtractor:
             )
             self.feature_final = self.model.fc_feats  # Убираем avgpool и fc
 
+        elif self.image_model_type == 'clip':
+            self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
+
         else:
             raise ValueError(
                 f"❌ Неизвестный image_model_type: {self.image_model_type}"
@@ -471,12 +475,14 @@ class PretrainedImageEmbeddingExtractor:
         """
 
         with torch.no_grad():
-            if self.image_model_type != "emo":
-                x = self.features(x)  # [batch, 512, 7, 7] (для 224x224)
-                x = self.avgpool(x) # [batch, 512, 1, 1] (для 224x224)
-                x = x.view(x.shape[0], -1)  # [batch, 512]
+            if self.image_model_type == "resnet18" or self.image_model_type == "емоresnet50" or self.image_model_type == "resnet50":
+                x = self.features(x)
+                x = self.avgpool(x)
+                x = x.view(x.shape[0], -1)
             elif self.image_model_type == "emo":
-                x = self.features(x)  # [batch, 512, 7, 7] (для 224x224)
-                x = x.view(x.size(0), -1)  # flatten
+                x = self.features(x)
+                x = x.view(x.size(0), -1)
                 x = self.feature_final(x)
+            elif self.image_model_type == "clip":
+                x = self.model.get_image_features(x)
         return x

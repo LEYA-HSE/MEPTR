@@ -44,13 +44,14 @@ opt_set = 'dev'                   # набор для оптимизации п�
 # Параметры модели
 # ---------------------------
 [train.model]
-model_name            = "EmotionPersonalityModel_v2" # название модели
-model_stage           = 'emotion' # название этапа при котором замораживаются разные слои
-path_to_saved_emotion_model = "resnet50_mamba_emotion_best_model_dev.pt" # используется на этапе 'personality', путь к модели этапа 'emotion'
-path_to_saved_personality_model = "resnet50_mamba_personality_best_model_dev.pt" # используется на этапе 'fusion', путь к модели этапа 'personality' при необходимости меняем слои, которые не надо перености, в файле train_utils_video
+model_name            = "EmotionPersonalityModel_v3" # название модели
+model_stage           = 'fusion' # название этапа при котором замораживаются разные слои
+path_to_saved_emotion_model = "resnet50_transformer_best_model_dev.pt" # используется на этапе 'personality', путь к модели этапа 'emotion'
+path_to_saved_personality_model = "resnet50_transformer_personality_best_model_dev.pt" # используется на этапе 'fusion', путь к модели этапа 'personality' при необходимости меняем слои, которые не надо перености, в файле train_utils_video
+per_activation        = "relu"   # sigmoid
 weight_emotion        = 0.1      # для корректировки лосса эмоций 0.1 при взвешивании классов, 1.0 без взвешивания
 weight_pers           = 1        # для корректировки лосса персональных качеств
-pers_loss_type        = 'rmse_gl'# ccc, mae, mse, rmse_bell, rmse_logcosh, RMGL
+pers_loss_type        = 'mae'    # ccc, mae, mse, rmse_bell, rmse_logcosh, RMGL
 flag_emo_weight       = true     # используем веса для дисбаланса эмоциональных классов
 hidden_dim            = 512      # размер скрытого состояния 
 num_transformer_heads = 8        # количество attention голов в трансформере
@@ -58,7 +59,7 @@ tr_layer_number       = 5        # количество слоев в транс
 mamba_d_state         = 16       # размер состояния в Mamba
 mamba_ker_size        = 6        # размер кернела в Mamba
 mamba_layer_number    = 5        # количество слоев Mamba
-positional_encoding   = true    # использовать ли позиционное кодирование
+positional_encoding   = false    # использовать ли позиционное кодирование
 dropout               = 0.15     # dropout между слоями
 out_features          = 256      # размер финальных признаков перед классификацией
 
@@ -80,8 +81,8 @@ warmup_ratio = 0.1         # отношение количества warmup-ит
 
 [embeddings]
 image_classifier_checkpoint = "torchscript_model_0_66_37_wo_gl.pth"
-image_model_type = "resnet50"  # resnet18, emo, емоresnet50, resnet50
-image_embedding_dim = 2048 # 2048 (емоresnet50, resnet50) и 512 (resnet18 and emo) размерность видео-эмбеддинга
+image_model_type = "resnet50"  # resnet18, emo, емоresnet50, resnet50, clip
+image_embedding_dim = 2048 # 2048 (емоresnet50, resnet50) и 512 (resnet18, emo, clip) размерность видео-эмбеддинга
 cut_target_layer = 2      # 4 (емоresnet50) и 2 (resnet18, resnet50) и 3 (emo) слой до какого обрезать модель и извлечь фичи
 roi_video = "body"        # область интереса или либо body или вся scene
 counter_need_frames = 30  # сколько кадров отобрать из всех возможных с равномерным шагом

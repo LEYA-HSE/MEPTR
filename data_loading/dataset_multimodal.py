@@ -13,6 +13,7 @@ import cv2
 import matplotlib.pyplot as plt
 from torchvision import transforms
 from PIL import Image
+from transformers import CLIPProcessor
 
 class DatasetVideo(Dataset):
     """
@@ -53,6 +54,8 @@ class DatasetVideo(Dataset):
         self.counter_need_frames = config.counter_need_frames
         self.image_size = config.image_size
         self.image_model_type = config.image_model_type
+        if  self.image_model_type == 'clip':
+            self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
         if self.dataset_name == 'cmu_mosei':
             self.label_columns = ["Neutral","Anger","Disgust","Fear","Happiness","Sadness","Surprise"]
@@ -144,7 +147,7 @@ class DatasetVideo(Dataset):
                 ttransform = transforms.Compose(
                     [transforms.PILToTensor(), PreprocessInput()]
                 )
-            else:  # 'resnet18' "resnet50'
+            elif self.image_model_type == 'resnet18' or self.image_model_type == 'resnet50':
                 ttransform = transforms.Compose(
                     [
                         transforms.ToTensor(),
@@ -154,11 +157,15 @@ class DatasetVideo(Dataset):
                     ]
                 )
 
-            img = img.resize(
-                (self.image_size, self.image_size), Image.Resampling.NEAREST
-            )
-            img = ttransform(img)
-            img = torch.unsqueeze(img, 0).to("cuda")
+            if self.image_model_type != 'clip':
+                img = img.resize(
+                    (self.image_size, self.image_size), Image.Resampling.NEAREST
+                )
+                img = ttransform(img)
+                img = torch.unsqueeze(img, 0).to("cuda")
+            elif self.image_model_type == 'clip':
+                img = self.processor(images=img, return_tensors="pt").to("cuda")
+                img = img['pixel_values']
             return img
 
         return get_img_torch(fp)
