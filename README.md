@@ -7,6 +7,8 @@ This branch includes code for:
 * A multitask fusion model that jointly processes both modalities
 * End-to-end inference from raw `.mp4` video
 
+  Weights for all used models can be accessed via [this](https://drive.google.com/drive/folders/1BsJ8F_vM-SHG-IHVTYutAjC21nkimNTd?usp=sharing) link.
+
 ---
 
 ## File Overview
