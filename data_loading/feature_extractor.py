@@ -441,7 +441,7 @@ class PretrainedImageEmbeddingExtractor:
             self.features = nn.Sequential(*list(self.model.children())[:-config.cut_target_layer])
             self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
-        elif self.image_model_type == "емоresnet50":
+        elif self.image_model_type == "emoresnet50":
             self.model = torch.jit.load(config.image_classifier_checkpoint).to(
                 self.device
             )

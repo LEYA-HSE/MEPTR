@@ -7,7 +7,7 @@ import random
 import numpy as np
 import csv
 import pandas as pd
-from tqdm import tqdm
+from tqdm import tqdm, trange
 from typing import Type
 import os
 import datetime
@@ -142,7 +142,7 @@ def make_dataset_and_loader(config, split: str, audio_feature_extractor: Type = 
         video_dir  = dataset_cfg["video_dir"].format(base_dir=dataset_cfg["base_dir"], task=dataset_cfg["task"], split=split)
         task = dataset_cfg["task"]
 
-        logging.info(f"[{dataset_name.upper()}], Task={task}, Split={split}: CSV={csv_path}, Video_DIR={video_dir}")
+        logging.info(f"[{dataset_name.upper()}] Task={task}, split={split}: csv_path={csv_path}, video_path={video_dir}")
 
         dataset = DatasetVideo(
             csv_path=csv_path, 
@@ -566,7 +566,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
             emo_iter = infinite_loader(train_loaders['cmu_mosei'])
             pers_iter = infinite_loader(train_loaders['fiv2'])
 
-            for step in tqdm(range(steps_per_epoch)):
+            for step in trange(steps_per_epoch):
                 emo_batch = next(emo_iter)
                 pers_batch = next(pers_iter)
 

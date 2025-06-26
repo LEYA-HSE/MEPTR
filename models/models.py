@@ -34,7 +34,7 @@ class EmotionMamba(nn.Module):
         emo = self.emo_proj(emotion_input)
 
         for layer in self.emotion_encoder:
-            emo += layer(emo)
+            emo = layer(emo)
 
         out_emo = self.emotion_fc_out(emo.mean(dim=1))  # (B, num_emotions)
         
@@ -80,7 +80,7 @@ class PersonalityMamba(nn.Module):
         per = self.per_proj(personality_input)
 
         for layer in self.personality_encoder:
-            per += layer(per)
+            per = layer(per)
 
         out_per = self.personality_fc_out(per.mean(dim=1))
     

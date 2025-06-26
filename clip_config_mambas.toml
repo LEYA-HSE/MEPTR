@@ -48,35 +48,35 @@ weight_emotion        = 0.1      # для корректировки лосса 
 weight_pers           = 1        # для корректировки лосса персональных качеств
 pers_loss_type        = 'mae'    # ccc, mae, mse, rmse_bell, rmse_logcosh, RMGL
 flag_emo_weight       = true     # используем веса для дисбаланса эмоциональных классов
-hidden_dim            = 512      # размер скрытого состояния 
-num_transformer_heads = 4        # количество attention голов в трансформере
-tr_layer_number       = 3        # количество слоев в трансформере
-# mamba_d_state         = 16       # размер состояния в Mamba
-# mamba_layer_number    = 5        # количество слоев Mamba
-positional_encoding   = false     # использовать ли позиционное кодирование
-dropout               = 0.2      # dropout между слоями
-out_features          = 256      # размер финальных признаков перед классификацией
+hidden_dim            = 768      # размер скрытого состояния 
+num_transformer_heads = 8        # количество attention голов в трансформере
+tr_layer_number       = 5        # количество слоев в трансформере
+mamba_d_state         = 16       # размер состояния в Mamba
+mamba_layer_number    = 5        # количество слоев Mamba
+positional_encoding   = false    # использовать ли позиционное кодирование
+dropout               = 0.3      # dropout между слоями
+out_features          = 128      # размер финальных признаков перед классификацией
 # best parameters for emotion and personality models
 best_per_activation             = "relu" # устанавливается только на этапе fusion согласно лучшей модели
-name_best_emo_model             = 'EmotionTransformer'
-path_to_saved_emotion_model     = "resnet50_emotion_transformer_best_model_dev.pt" # путь к лучшей эмоциональной модели
-hidden_dim_emo                  = 512   # устанавливается только на этапе fusion согласно лучшей модели
-out_features_emo                = 128   # устанавливается только на этапе fusion согласно лучшей модели
-num_transformer_heads_emo       = 4     # устанавливается только на этапе fusion согласно лучшей модели
-tr_layer_number_emo             = 5     # устанавливается только на этапе fusion согласно лучшей модели
-positional_encoding_emo         = false  # устанавливается только на этапе fusion согласно лучшей модели
-# mamba_d_state_emo               = 6    # устанавливается только на этапе fusion согласно лучшей модели
-# mamba_layer_number_emo          = 3     # устанавливается только на этапе fusion согласно лучшей модели
+name_best_emo_model             = 'EmotionMamba'
+path_to_saved_emotion_model     = "clip_emotion_mamba_best_model_dev.pt" # путь к лучшей эмоциональной модели
+hidden_dim_emo                  = 256   # устанавливается только на этапе fusion согласно лучшей модели
+out_features_emo                = 192   # устанавливается только на этапе fusion согласно лучшей модели
+# num_transformer_heads_emo       = 4     # устанавливается только на этапе fusion согласно лучшей модели
+# tr_layer_number_emo             = 1     # устанавливается только на этапе fusion согласно лучшей модели
+positional_encoding_emo         = true  # устанавливается только на этапе fusion согласно лучшей модели
+mamba_d_state_emo               = 8    # устанавливается только на этапе fusion согласно лучшей модели
+mamba_layer_number_emo          = 3     # устанавливается только на этапе fusion согласно лучшей модели
 # personality
-name_best_per_model             = 'PersonalityTransformer'
-path_to_saved_personality_model = "resnet50_personality_transformer_best_model_dev.pt" # путь к лучшей персональной модели
-hidden_dim_per                  = 512   # устанавливается только на этапе fusion согласно лучшей модели
-out_features_per                = 256   # устанавливается только на этапе fusion согласно лучшей модели
-num_transformer_heads_per       = 4     # устанавливается только на этапе fusion согласно лучшей модели
-tr_layer_number_per             = 3     # устанавливается только на этапе fusion согласно лучшей модели
-positional_encoding_per         = false  # устанавливается только на этапе fusion согласно лучшей модели
-# mamba_d_state_per               = 8    # устанавливается только на этапе fusion согласно лучшей модели
-# mamba_layer_number_per          = 5     # устанавливается только на этапе fusion согласно лучшей модели
+name_best_per_model             = 'PersonalityMamba'
+path_to_saved_personality_model = "clip_personality_mamba_best_model_dev.pt" # путь к лучшей персональной модели
+hidden_dim_per                  = 192   # устанавливается только на этапе fusion согласно лучшей модели
+out_features_per                = 128   # устанавливается только на этапе fusion согласно лучшей модели
+# num_transformer_heads_per       = 4     # устанавливается только на этапе fusion согласно лучшей модели
+# tr_layer_number_per             = 1     # устанавливается только на этапе fusion согласно лучшей модели
+positional_encoding_per         = true  # устанавливается только на этапе fusion согласно лучшей модели
+mamba_d_state_per               = 8    # устанавливается только на этапе fusion согласно лучшей модели
+mamba_layer_number_per          = 5     # устанавливается только на этапе fusion согласно лучшей модели
 
 # ---------------------------
 # Параметры оптимизатора
@@ -96,11 +96,12 @@ warmup_ratio = 0.1         # отношение количества warmup-ит
 
 [embeddings]
 image_classifier_checkpoint = "torchscript_model_0_66_37_wo_gl.pth"
-image_model_type = "resnet50"  # resnet18, emo, emoresnet50, resnet50, clip
-image_embedding_dim = 2048  # 2048 (emoresnet50, resnet50) и 512 (resnet18, emo, clip) размерность видео-эмбеддинга
-cut_target_layer = 2       # 4 (emoresnet50) и 2 (resnet18, resnet50) и 3 (emo) слой до какого обрезать модель и извлечь фичи
+image_model_type = "clip"  # resnet18, emo, емоresnet50, resnet50, clip
+image_embedding_dim = 512  # 2048 (емоresnet50, resnet50) и 512 (resnet18, emo, clip) размерность видео-эмбеддинга
+cut_target_layer = 2       # 4 (емоresnet50) и 2 (resnet18, resnet50) и 3 (emo) слой до какого обрезать модель и извлечь фичи
 roi_video = "scene"        # область интереса или либо body или вся scene
 counter_need_frames = 30   # сколько кадров отобрать из всех возможных с равномерным шагом
 image_size = 224           # ширина и высота изображения
 emb_normalize = false      # нормализовать ли вектор L2-нормой
 device = "cuda"            # "cuda" или "cpu", куда грузить модел
+

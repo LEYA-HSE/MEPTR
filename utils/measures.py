@@ -105,7 +105,6 @@ def acc_func(trues, preds):
 def ccc(y_true, y_pred):
     """
     This function calculates loss based on concordance correlation coefficient of two series: 'ser1' and 'ser2'
-    TensorFlow methods are used
     """
 
     y_true_mean = np.mean(y_true)

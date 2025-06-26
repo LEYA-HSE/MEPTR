@@ -18,9 +18,9 @@ from training.train_utils_video import (
 from data_loading.feature_extractor import PretrainedImageEmbeddingExtractor
 
 def main():
-
+    CONFIG_PATH = 'config.toml'
     #  Грузим конфиг
-    base_config = ConfigLoader("config.toml")
+    base_config = ConfigLoader(CONFIG_PATH)
 
     model_name = base_config.model_name.replace("/", "_").replace(" ", "_").lower()
     timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
@@ -37,7 +37,7 @@ def main():
     #  Грузим конфиг
     base_config.show_config()
 
-    shutil.copy("config.toml", os.path.join(results_dir, "config_copy.toml"))
+    shutil.copy(CONFIG_PATH, os.path.join(results_dir, "config_copy.toml"))
     #  Файл, куда будет писать наш жадный поиск
     overrides_file = os.path.join(results_dir, "overrides.txt")
     csv_prefix = os.path.join(epochlog_dir, "metrics_epochlog")
@@ -121,7 +121,7 @@ def main():
 
         train_once(
             config           = base_config,
-            train_loader     = train_loaders,
+            train_loaders    = train_loaders,
             dev_loaders      = dev_loaders,
             test_loaders     = test_loaders,
             metrics_csv_path = csv_file_path,
