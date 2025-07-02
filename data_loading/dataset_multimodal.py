@@ -57,7 +57,7 @@ class DatasetVideo(Dataset):
         self.counter_need_frames = config.counter_need_frames
         self.image_size = config.image_size
         self.image_model_type = config.image_model_type
-        if  self.image_model_type == 'clip':
+        if self.image_model_type == 'clip':
             self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
         if self.dataset_name == 'cmu_mosei':
@@ -177,6 +177,7 @@ class DatasetVideo(Dataset):
             if filename in files:
                 return os.path.join(root, filename)
         return None
+
     def select_uniform_frames(self, frames, N) -> list:
         if len(frames) <= N:
             return list(frames)  # Если кадров меньше N, вернуть все
@@ -258,63 +259,6 @@ class DatasetVideo(Dataset):
             "video": video_features,
             "label": torch.tensor(label_vec, dtype=torch.float32),
         }
-    
-    # def get_data(self, segment_name):
-    #     curr_data: pd.DataFrame = self.df[self.df.filename == segment_name].dropna() # отбираем все строки нужного сегмента видео и убираем кадры где не найдено лица
-
-    #     label_vec = curr_data[self.label_columns].values[0]
-    #     curr_frames = curr_data.frame.unique().tolist() # считываем фреймы
-    #     need_curr_frames = self.select_uniform_frames(curr_frames, self.counter_need_frames)
-
-    #     if self.dataset_name == 'fiv2':
-    #         full_path_video = self.find_file_recursive(self.video_dir, curr_data.filename.unique()[0])
-    #     else:
-    #         full_path_video = os.path.join(self.video_dir, curr_data.filename.unique()[0])
-
-    #     # cap = cv2.VideoCapture(full_path_video)
-
-    #     needed_frames = torchcodec.decoders.VideoDecoder(full_path_video, dimension_order='NHWC', device='cpu').get_frames_at([i-1 for i in need_curr_frames]).data.cpu().numpy()
-    #     # video, _, _ = torchvision.io.read_video(full_path_video, pts_unit='sec', output_format='THWC')
-    #     # needed_frames = video[need_curr_frames - 1, :, :, :].numpy()
-    #     # tqdm.write(f'{video.shape}, {video.dtype}')
-    #     all_frames = []
-    #     frame_to_faces_indices = {}
-
-    #     for idx, (single_frame, frame_id) in enumerate(zip(needed_frames, need_curr_frames)):
-    #         # tqdm.write(f'Single frame: {single_frame.shape}, {single_frame.dtype}')
-    #         if self.roi_video == 'body':
-    #             bboxs = curr_data[curr_data.frame == frame_id][["startX_body","startY_body","endX_body","endY_body"]].values.astype('int')
-    #             frame_to_faces_indices[idx] = range(idx, idx + len(bboxs))
-    #             for bbox in bboxs:
-    #                 curr_fr = single_frame[bbox[1]: bbox[3], bbox[0]: bbox[2]]
-    #                 curr_fr = self.pth_processing(Image.fromarray(curr_fr))
-    #                 all_frames.append(curr_fr)
-    #         else:
-    #             curr_fr = single_frame
-    #             curr_fr = self.pth_processing(Image.fromarray(curr_fr))
-    #             all_frames.append(curr_fr)
-
-    #     all_frames = torch.cat(all_frames, dim=0)
-    #     video_features = self.image_feature_extractor.extract(all_frames).to('cpu')
-
-    #     if self.roi_video == 'body':
-    #         frame_features = []
-    #         for idx in range(len(need_curr_frames)):
-    #             if idx in frame_to_faces_indices:
-    #                 face_indices = frame_to_faces_indices[idx]
-    #                 if not face_indices:
-    #                     frame_features.append(torch.zeros(video_features.shape[1]))
-    #                 else:
-    #                     frame_features.append(video_features[list(face_indices)].mean(dim=0))
-    #         video_features = torch.stack(frame_features)
-
-    #     torch.cuda.empty_cache()
-
-    #     return {
-    #         "video_path": full_path_video,
-    #         "video": video_features,
-    #         "label": torch.tensor(label_vec, dtype=torch.float32),
-    #     }
 
     def prepare_data(self):
         """

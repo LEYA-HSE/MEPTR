@@ -1,24 +1,26 @@
 [grid]
-hidden_dim            = [512, 768, 1024]
-dropout               = [0.2, 0.3]
-out_features          = [128, 192, 256]
-# per_activation        = ["relu"]
+hidden_dim            = [256, 512, 768]
+dropout               = [0.1, 0.2, 0.3]
+out_features          = [128, 256, 384]
+per_activation        = ["relu"]
 pers_loss_type        = ["mae"]
-# mamba_d_state         = [8]
-# mamba_layer_number    = [5]
+# mamba_d_state         = [3, 4, 5, 6, 7]
+# mamba_layer_number    = [6, 7, 8]
 num_transformer_heads = [4, 8]
-tr_layer_number       = [3, 5, 7]
-positional_encoding   = [true, false]
+tr_layer_number       = [5, 7]
+positional_encoding   = [false, true]
 
 [defaults]
-hidden_dim            = 768
-dropout               = 0.3
-out_features          = 128
+hidden_dim            = 512
+dropout               = 0.2
+out_features          = 256
 # lr                    = 1e-4
 # per_activation        = "relu"
 pers_loss_type        = "mae"
-mamba_d_state         = 8
-mamba_layer_number    = 5
+# mamba_d_state         = 4
+# mamba_layer_number    = 3
+num_transformer_heads = 4
+tr_layer_number       = 3
 positional_encoding   = false
 # [grid]
 # hidden_dim            = [192]

@@ -18,7 +18,8 @@ from training.train_utils_video import (
 from data_loading.feature_extractor import PretrainedImageEmbeddingExtractor
 
 def main():
-    CONFIG_PATH = 'config.toml'
+    # CONFIG_PATH = 'config.toml'
+    CONFIG_PATH = 'clip_config_transformer_mamba.toml'
     #  Грузим конфиг
     base_config = ConfigLoader(CONFIG_PATH)
 
