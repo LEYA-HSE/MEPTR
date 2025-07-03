@@ -117,9 +117,11 @@ def main():
 
     emo_state = torch.load(config.path_to_saved_emotion_model, map_location=config.emb_device)
     emo_model.load_state_dict(emo_state)
+    emo_model.eval()
 
     per_state = torch.load(config.path_to_saved_personality_model, map_location=config.emb_device)
     per_model.load_state_dict(per_state)
+    per_model.eval()
 
     model_cls = dict_models[config.model_name]
     model = model_cls(
@@ -140,10 +142,15 @@ def main():
         num_traits            = 5,
         device                = config.emb_device
         ).to(config.emb_device)
+    
+    fus_state = torch.load(config.path_to_saved_fusion_model, map_location=config.emb_device)
+    model.load_state_dict(fus_state)
+    model.eval()
 
-    video_features = full_pipeline_feature_extractor(VIDEO_PATH).to(config.emb_device)[None, :, :]
-    outputs = model(emotion_input=video_features, personality_input=video_features)
-    print(outputs)
+    with torch.no_grad():
+        video_features = full_pipeline_feature_extractor(VIDEO_PATH).to(config.emb_device)[None, :, :]
+        outputs = model(emotion_input=video_features, personality_input=video_features)
+        print(outputs)
 
 
 if __name__ == "__main__":

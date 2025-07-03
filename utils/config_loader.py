@@ -95,6 +95,7 @@ class ConfigLoader:
         train_model = self.config.get("train", {}).get("model", {})
         self.model_name = train_model.get("model_name", "BiFormer")
         self.model_stage = train_model.get("model_stage", "emotion")
+        self.path_to_saved_fusion_model = train_model.get("path_to_saved_fusion_model", None)
         self.path_to_saved_emotion_model = train_model.get("path_to_saved_emotion_model", None)
         self.path_to_saved_personality_model = train_model.get("path_to_saved_personality_model", None)
         self.per_activation = train_model.get("per_activation", "sigmoid")

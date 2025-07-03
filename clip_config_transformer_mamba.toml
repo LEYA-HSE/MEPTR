@@ -42,6 +42,7 @@ opt_set = 'dev'                   # набор для оптимизации п�
 # ---------------------------
 [train.model]
 model_name            = "FusionTransformer" # название модели
+path_to_saved_fusion_model = "clip_fusion_transformer_transformer_mamba_best_model_dev.pt"
 model_stage           = 'fusion' # название этапа personality, emotion, fusion
 per_activation        = "relu"   # sigmoid
 weight_emotion        = 0.1      # для корректировки лосса эмоций 0.1 при взвешивании классов, 1.0 без взвешивания
