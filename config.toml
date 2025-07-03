@@ -69,14 +69,14 @@ positional_encoding_emo         = false  # устанавливается тол
 # mamba_layer_number_emo          = 3     # устанавливается только на этапе fusion согласно лучшей модели
 # personality
 name_best_per_model             = 'PersonalityMamba'
-path_to_saved_personality_model = "clip_personality_mamba_best_model_dev_ccc.pt" # путь к лучшей персональной модели
-hidden_dim_per                  = 768   # устанавливается только на этапе fusion согласно лучшей модели
+path_to_saved_personality_model = "clip_personality_mamba_best_model_dev_acc.pt" # путь к лучшей персональной модели
+hidden_dim_per                  = 512   # устанавливается только на этапе fusion согласно лучшей модели
 out_features_per                = 512   # устанавливается только на этапе fusion согласно лучшей модели
 # num_transformer_heads_per       = 16     # устанавливается только на этапе fusion согласно лучшей модели
 # tr_layer_number_per             = 6     # устанавливается только на этапе fusion согласно лучшей модели
 # positional_encoding_per         = false  # устанавливается только на этапе fusion согласно лучшей модели
-mamba_d_state_per               = 6    # устанавливается только на этапе fusion согласно лучшей модели
-mamba_layer_number_per          = 8     # устанавливается только на этапе fusion согласно лучшей модели
+mamba_d_state_per               = 4    # устанавливается только на этапе fusion согласно лучшей модели
+mamba_layer_number_per          = 7     # устанавливается только на этапе fusion согласно лучшей модели
 
 # ---------------------------
 # Параметры оптимизатора
