@@ -175,6 +175,7 @@ class ConfigLoader:
         self.text_pooling  = emb_cfg.get("text_pooling", None)
         self.max_tokens = emb_cfg.get("max_tokens", 256)
         self.emb_device = emb_cfg.get("device", "cuda")
+        self.window_size = emb_cfg.get("window_size", 5)
 
         # ---------------------------
         # Синтетика

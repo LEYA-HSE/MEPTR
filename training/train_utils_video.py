@@ -2,6 +2,7 @@
 # train_utils.py
 
 import torch
+torch.autograd.set_detect_anomaly(True)
 import logging
 import random
 import numpy as np
@@ -22,7 +23,10 @@ EmotionMamba,
 PersonalityMamba,
 EmotionTransformer,
 PersonalityTransformer,
-FusionTransformer
+FusionTransformer,
+FusionTransformer2,
+EnhancedFusionTransformer,
+FusionTransformerWithProbWeightedFusion
 )
 from utils.schedulers import SmartScheduler
 from data_loading.dataset_multimodal import DatasetVideo
@@ -331,7 +335,10 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
         "PersonalityMamba": PersonalityMamba,
         "EmotionTransformer": EmotionTransformer,
         "PersonalityTransformer": PersonalityTransformer,
-        "FusionTransformer": FusionTransformer
+        "FusionTransformer": FusionTransformer,
+        "FusionTransformer2": FusionTransformer2,
+        "EnhancedFusionTransformer": EnhancedFusionTransformer,
+        "FusionTransformerWithProbWeightedFusion":FusionTransformerWithProbWeightedFusion,
     }
 
     model_cls = dict_models[config.model_name]
@@ -340,6 +347,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
         model = model_cls(
             input_dim_emotion     = config.image_embedding_dim,
             input_dim_personality = config.image_embedding_dim,
+            len_seq               = config.counter_need_frames, 
             hidden_dim            = config.hidden_dim,
             out_features          = config.out_features,
             per_activation        = config.per_activation,
@@ -359,6 +367,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
         emo_model = model_cls(
         input_dim_emotion     = config.image_embedding_dim,
         input_dim_personality = config.image_embedding_dim,
+        len_seq               = config.counter_need_frames, 
         hidden_dim            = config.hidden_dim_emo,
         out_features          = config.out_features_emo,
         tr_layer_number       = config.tr_layer_number_emo,
@@ -376,6 +385,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
         per_model = model_cls(
         input_dim_emotion     = config.image_embedding_dim,
         input_dim_personality = config.image_embedding_dim,
+        len_seq               = config.counter_need_frames, 
         hidden_dim            = config.hidden_dim_per,
         out_features          = config.out_features_per,
         per_activation        = config.best_per_activation,
@@ -478,10 +488,11 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
 
                 inputs  = batch['video'].to(device)
                 labels = batch['label'].to(device).type(torch.float32)
-
+                # print(inputs.shape)
                 outputs = model(emotion_input=inputs)
+                # print(outputs, labels)
                 loss = criterion(outputs, {"emotion": labels})
-
+                # print(loss)
                 loss.backward()
                 optimizer.step()
                 optimizer.zero_grad()

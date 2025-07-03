@@ -17,6 +17,7 @@ from torchvision.models import resnet18, ResNet18_Weights, resnet50, ResNet50_We
 from data_loading.pretrained_extractors import EmotionModel, get_model_mamba, Mamba
 
 from transformers import CLIPModel
+from collections import deque
 
 class PretrainedAudioEmbeddingExtractor:
     """
@@ -463,6 +464,9 @@ class PretrainedImageEmbeddingExtractor:
 
         elif self.image_model_type == 'clip':
             self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
+        
+        elif self.image_model_type == 'body_movement':
+            print()
 
         else:
             raise ValueError(
@@ -486,3 +490,296 @@ class PretrainedImageEmbeddingExtractor:
             elif self.image_model_type == "clip":
                 x = self.model.get_image_features(x)
         return x
+
+class PoseFeatureExtractor:
+    def __init__(self, list_hand_crafted_features, angle_features, window_size=5):
+        # Все исходные признаки
+        self.list_hand_crafted_features = list_hand_crafted_features
+        
+        # Угловые признаки для специальной обработки
+        self.angle_features = angle_features
+        
+        # Параметры для скользящего окна
+        self.window_size = window_size
+        self.feature_history = deque(maxlen=window_size)
+        self.time_history = deque(maxlen=window_size)
+        
+        # Для хранения предыдущих значений скорости
+        self.prev_velocity = None
+        
+        # Генерация имен всех признаков
+        self._generate_feature_names()
+    
+    def _generate_feature_names(self):
+        """Генерирует имена всех признаков, включая производные"""
+        self.all_feature_names = []
+        
+        # Оригинальные признаки
+        self.all_feature_names.extend(self.list_hand_crafted_features)
+        
+        # Тригонометрические преобразования углов
+        for angle in self.angle_features:
+            self.all_feature_names.extend([f"sin_{angle}", f"cos_{angle}"])
+        
+        # Производные признаки (динамика)
+        for feat in self.list_hand_crafted_features:
+            self.all_feature_names.extend([f"delta_{feat}", f"velocity_{feat}", f"accel_{feat}"])
+        
+        # Взаимодействия важных пар признаков
+        self.interaction_pairs = [
+            ("head_tilt_left", "shoulder_tilt_left"),
+            ("head_tilt_right", "shoulder_tilt_right"),
+            ("left_hand_above_shoulder", "right_hand_above_shoulder"),
+            ("hands_crossed", "shoulder_asymmetry")
+        ]
+        
+        for pair in self.interaction_pairs:
+            self.all_feature_names.append(f"interaction_{pair[0]}_{pair[1]}")
+    
+    def _trigonometric_transform(self, angle, angle_value):
+        """Применяет тригонометрические преобразования к углу"""
+        rad = np.radians(angle_value)
+        return {
+            f"sin_{angle}": np.sin(rad),
+            f"cos_{angle}": np.cos(rad)
+        }
+    
+    def _calculate_interactions(self, features):
+        """Вычисляет взаимодействия между важными парами признаков"""
+        interactions = {}
+        for feat1, feat2 in self.interaction_pairs:
+            interactions[f"interaction_{feat1}_{feat2}"] = features[feat1] * features[feat2]
+        return interactions
+    
+    def _calculate_moving_averages(self):
+        """Вычисляет скользящие средние для всех признаков"""
+        if len(self.feature_history) < self.window_size:
+            return {f"ma_{feat}": 0 for feat in self.list_hand_crafted_features}
+        
+        ma_features = {}
+        for feat in self.list_hand_crafted_features:
+            values = [frame[feat] for frame in self.feature_history]
+            ma_features[f"ma_{feat}"] = np.mean(values)
+        
+        return ma_features
+    
+    def _calculate_dynamics(self, current_features, current_time):
+        """Вычисляет динамические признаки (разности, скорости, ускорения)"""
+        dynamic_features = {}
+        
+        if len(self.feature_history) == 0:
+            # Нет истории - заполняем нулями
+            for feat in self.list_hand_crafted_features:
+                dynamic_features.update({
+                    f"delta_{feat}": 0,
+                    f"velocity_{feat}": 0,
+                    f"accel_{feat}": 0
+                })
+            return dynamic_features
+        
+        # Берем последний кадр из истории
+        prev_features = self.feature_history[-1]
+        prev_time = self.time_history[-1]
+        time_diff = current_time - prev_time
+        
+        # Для ускорения нужно проверить, есть ли предыдущая скорость
+        has_prev_velocity = self.prev_velocity is not None
+        
+        for feat in self.list_hand_crafted_features:
+            # Разность значений
+            delta = current_features[feat] - prev_features[feat]
+            dynamic_features[f"delta_{feat}"] = delta
+            
+            # Скорость изменения
+            velocity = delta / time_diff if time_diff > 0 else 0
+            dynamic_features[f"velocity_{feat}"] = velocity
+            
+            # Ускорение
+            if has_prev_velocity:
+                accel = (velocity - self.prev_velocity[feat]) / time_diff if time_diff > 0 else 0
+                dynamic_features[f"accel_{feat}"] = accel
+            else:
+                dynamic_features[f"accel_{feat}"] = 0
+        
+        return dynamic_features
+    
+    def process_frame(self, current_features, current_time):
+        """Обрабатывает кадр с признаками и возвращает расширенный набор признаков"""
+        # 1. Копируем оригинальные признаки
+        features = current_features.copy()
+        
+        # 2. Добавляем тригонометрические преобразования углов
+        trig_features = {}
+        for angle in self.angle_features:
+            if angle in current_features:
+                trig_features.update(self._trigonometric_transform(angle, current_features[angle]))
+        features.update(trig_features)
+        
+        # 3. Добавляем взаимодействия признаков
+        interaction_features = self._calculate_interactions(features)
+        features.update(interaction_features)
+        
+        # 4. Добавляем скользящие средние
+        ma_features = self._calculate_moving_averages()
+        features.update(ma_features)
+        
+        # 5. Добавляем динамические признаки
+        dynamic_features = self._calculate_dynamics(features, current_time)
+        features.update(dynamic_features)
+        
+        # 6. Обновляем историю и предыдущие значения
+        self.feature_history.append(features.copy())
+        self.time_history.append(current_time)
+        
+        # Сохраняем текущие скорости для следующего кадра
+        self.prev_velocity = {feat: dynamic_features[f"velocity_{feat}"] 
+                            for feat in self.list_hand_crafted_features}
+        
+        # 7. Создаем выходной вектор в правильном порядке
+        output_vector = [features.get(name, 0) for name in self.all_feature_names]
+        
+        return np.array(output_vector, dtype=np.float32)
+    
+    def get_feature_names(self):
+        """Возвращает имена всех признаков в правильном порядке"""
+        return self.all_feature_names
+    
+import numpy as np
+from collections import deque
+
+class EfficientPoseFeatureExtractor:
+    def __init__(self, list_hand_crafted_features, angle_features, window_size=5):
+        # Исходные признаки (34 шт.)
+        self.base_features = list_hand_crafted_features
+        
+        # Только ключевые углы для тригонометрии
+        self.key_angles = ["head_pitch_angle", "head_roll_angle", "head_yaw_angle"]
+        
+        # Только осмысленные динамические признаки
+        self.dynamic_features = [
+            "head_pitch_angle", "head_roll_angle", "head_yaw_angle",
+            "shoulder_asymmetry", "hands_crossed"
+        ]
+        
+        # Практически полезные взаимодействия
+        self.interaction_pairs = [
+            ("head_tilt_left", "shoulder_tilt_left"),
+            ("head_tilt_right", "shoulder_tilt_right"),
+            ("hands_crossed", "shoulder_asymmetry")
+        ]
+        
+        # История для скользящих средних
+        self.window_size = window_size
+        self.feature_history = deque(maxlen=window_size)
+        
+        # Генерация имен фичей
+        self._generate_feature_names()
+    
+    def _generate_feature_names(self):
+        """Генерация только полезных признаков"""
+        self.feature_names = []
+        
+        # 1. Базовые признаки (34)
+        self.feature_names.extend(self.base_features)
+        
+        # 2. Тригонометрия только для ключевых углов (3 угла * 2 = 6)
+        for angle in self.key_angles:
+            self.feature_names.extend([f"sin_{angle}", f"cos_{angle}"])
+        
+        # 3. Динамика только для ключевых признаков (5 признаков * 3 = 15)
+        for feat in self.dynamic_features:
+            self.feature_names.extend([f"delta_{feat}", f"velocity_{feat}", f"accel_{feat}"])
+        
+        # 4. Взаимодействия (3 пары)
+        for a, b in self.interaction_pairs:
+            self.feature_names.append(f"{a}_x_{b}")
+        
+        # 5. Скользящие средние только для углов (7 признаков)
+        for angle in self.key_angles + ["shoulder_asymmetry"]:
+            self.feature_names.append(f"ma_{angle}")
+    
+    def _add_trigonometrics(self, features):
+        """Добавляет sin/cos для ключевых углов"""
+        result = {}
+        for angle in self.key_angles:
+            rad = np.radians(features[angle])
+            result[f"sin_{angle}"] = np.sin(rad)
+            result[f"cos_{angle}"] = np.cos(rad)
+        return result
+    
+    def _add_dynamics(self, current_features, current_time):
+        """Вычисляет динамику только для ключевых признаков"""
+        if not self.feature_history:
+            return {f"{prefix}_{feat}": 0 
+                for feat in self.dynamic_features 
+                for prefix in ["delta", "velocity", "accel"]}
+        
+        prev_features = self.feature_history[-1]
+        time_diff = current_time - prev_features["timestamp"]
+        
+        dynamics = {}
+        for feat in self.dynamic_features:
+            delta = current_features[feat] - prev_features[feat]
+            velocity = delta / time_diff if time_diff > 0 else 0
+            
+            dynamics[f"delta_{feat}"] = delta
+            dynamics[f"velocity_{feat}"] = velocity
+            
+            # Ускорение (если есть предыдущая скорость)
+            if "prev_velocity" in prev_features:
+                prev_vel = prev_features["prev_velocity"].get(feat, 0)
+                accel = (velocity - prev_vel) / time_diff if time_diff > 0 else 0
+                dynamics[f"accel_{feat}"] = accel
+            else:
+                dynamics[f"accel_{feat}"] = 0
+        
+        return dynamics
+    
+    def _add_interactions(self, features):
+        """Вычисляет полезные взаимодействия"""
+        return {
+            f"{a}_x_{b}": features[a] * features[b]
+            for a, b in self.interaction_pairs
+        }
+    
+    def _add_moving_averages(self):
+        """Скользящие средние только для углов"""
+        if len(self.feature_history) < self.window_size:
+            return {f"ma_{angle}": 0 for angle in self.key_angles + ["shoulder_asymmetry"]}
+        
+        ma = {}
+        for angle in self.key_angles + ["shoulder_asymmetry"]:
+            values = [f[angle] for f in self.feature_history]
+            ma[f"ma_{angle}"] = np.mean(values)
+        return ma
+    
+    def process_frame(self, frame_features, timestamp):
+        """Основной метод обработки кадра"""
+        # 1. Базовые признаки
+        features = frame_features.copy()
+        
+        # 2. Тригонометрия
+        features.update(self._add_trigonometrics(frame_features))
+        
+        # 3. Динамика
+        dynamics = self._add_dynamics(frame_features, timestamp)
+        features.update(dynamics)
+        
+        # 4. Взаимодействия
+        features.update(self._add_interactions(frame_features))
+        
+        # 5. Скользящие средние
+        features.update(self._add_moving_averages())
+        
+        # Сохраняем историю
+        history_record = frame_features.copy()
+        history_record["timestamp"] = timestamp
+        history_record["prev_velocity"] = {k: v for k, v in dynamics.items() 
+                                        if k.startswith("velocity_")}
+        self.feature_history.append(history_record)
+        
+        # Возвращаем вектор в правильном порядке
+        return np.array([features.get(name, 0) for name in self.feature_names], dtype=np.float32)
+    
+    def get_feature_names(self):
+        return self.feature_names

@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 from torchvision import transforms
 from PIL import Image
 from transformers import CLIPProcessor
+from data_loading.feature_extractor import PoseFeatureExtractor
 
 class DatasetVideo(Dataset):
     """
@@ -50,12 +51,83 @@ class DatasetVideo(Dataset):
         # self.emotion_columns = config.emotion_columns
         self.save_prepared_data = config.save_prepared_data
         self.save_feature_path = config.save_feature_path
-        self.roi_video = config.roi_video # body or body_movement
+        self.roi_video = config.roi_video # body or body_movement, face or scene
         self.counter_need_frames = config.counter_need_frames
         self.image_size = config.image_size
         self.image_model_type = config.image_model_type
+        self.window_size = config.window_size
+        self.list_bbox = ["startX_face","startY_face","endX_face","endY_face"]
+        self.list_hand_crafted_features = [
+                "head_turn_left", # values 0, 1
+                "head_turn_right", # values 0, 1
+                "head_tilt_left", # values 0, 1
+                "head_tilt_right", # values 0, 1
+                "head_down", # values 0, 1
+                "head_up", # values 0, 1
+                "head_lean_forward", # values 0, 1
+                "shoulder_tilt_left", # values 0, 1
+                "shoulder_tilt_right", # values 0, 1
+                "shoulder_forward", # values 0, 1
+                "shoulder_backward", # values 0, 1
+                "head_pitch_angle", # углы
+                "head_roll_angle", # углы
+                "head_yaw_angle", # углы
+                "shoulder_roll_angle", # углы
+                "shoulder_asymmetry", # углы
+                "shoulder_curve_left", # углы
+                "shoulder_curve_right", # углы
+                "right_elbow_above_shoulder", # values 0, 1
+                "left_elbow_above_shoulder", # values 0, 1
+                "left_hand_on_face", # values 0, 1
+                "left_hand_above_shoulder", # values 0, 1
+                "left_hand_below_shoulder", # values 0, 1
+                "left_hand_near_left_ear", # values 0, 1
+                "left_hand_in_frame", # values 0, 1
+                "right_hand_on_face", # values 0, 1
+                "right_hand_above_shoulder", # values 0, 1
+                "right_hand_below_shoulder", # values 0, 1
+                "right_hand_near_right_ear", # values 0, 1
+                "right_hand_in_frame", # values 0, 1
+                "hands_crossed", # values 0, 1
+                "hands_crossed_above_shoulders", # values 0, 1
+                "hands_crossed_below_shoulders", # values 0, 1
+                "hands_above_head" # values 0, 1
+                ]
+        
+        self.binary_features = [
+                "head_turn_left", # values 0, 1
+                "head_turn_right", # values 0, 1
+                "head_tilt_left", # values 0, 1
+                "head_tilt_right", # values 0, 1
+                "head_down", # values 0, 1
+                "head_up", # values 0, 1
+                "head_lean_forward", # values 0, 1
+                "shoulder_tilt_left", # values 0, 1
+                "shoulder_tilt_right", # values 0, 1
+                "shoulder_forward", # values 0, 1
+                "shoulder_backward", # values 0, 1
+                "right_elbow_above_shoulder", # values 0, 1
+                "left_elbow_above_shoulder", # values 0, 1
+                "left_hand_on_face", # values 0, 1
+                "left_hand_above_shoulder", # values 0, 1
+                "left_hand_below_shoulder", # values 0, 1
+                "left_hand_near_left_ear", # values 0, 1
+                "left_hand_in_frame", # values 0, 1
+                "right_hand_on_face", # values 0, 1
+                "right_hand_above_shoulder", # values 0, 1
+                "right_hand_below_shoulder", # values 0, 1
+                "right_hand_near_right_ear", # values 0, 1
+                "right_hand_in_frame", # values 0, 1
+                "hands_crossed", # values 0, 1
+                "hands_crossed_above_shoulders", # values 0, 1
+                "hands_crossed_below_shoulders", # values 0, 1
+                "hands_above_head" # values 0, 1
+        ]
+
         if  self.image_model_type == 'clip':
             self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+        # elif self.image_model_type == 'body_movement':
+        #     self.processor = PoseFeatureExtractor(list_hand_crafted_features=self.list_hand_crafted_features, angle_features=self.angle_features,window_size=self.counter_need_frames)
 
         if self.dataset_name == 'cmu_mosei':
             self.label_columns = ["Neutral","Anger","Disgust","Fear","Happiness","Sadness","Surprise"]
@@ -70,6 +142,9 @@ class DatasetVideo(Dataset):
             raise ValueError(f"Ошибка: файл CSV не найден: {csv_path}")
         self.df = pd.read_csv(csv_path)
         self.df = self.df.dropna() # убераем кадры где не найдено лица
+        self.df = self.df.rename(columns={
+            "video_name": "filename",
+        })
         # self.len_labels = len(self.df.diagnosis.tolist())
         if self.subset_size > 0:
             self.need_segment_name = list(set(self.df.filename.tolist()))[:self.subset_size]
@@ -191,6 +266,8 @@ class DatasetVideo(Dataset):
         label_vec = curr_data[self.label_columns].values[0]
         curr_frames = list(set(curr_data.frame.tolist())) # считываем фреймы
         need_curr_frames = self.select_uniform_frames(curr_frames, self.counter_need_frames)
+        # print(curr_frames, len(need_curr_frames))
+        pass
 
         if self.dataset_name == 'fiv2':
             full_path_video = self.find_file_recursive(self.video_dir, curr_data.filename.unique()[0])
@@ -198,39 +275,45 @@ class DatasetVideo(Dataset):
             full_path_video = os.path.join(self.video_dir, curr_data.filename.unique()[0])
 
         cap = cv2.VideoCapture(full_path_video)
+        fps = cap.get(cv2.CAP_PROP_FPS)
         counter = 1
+
+        feature_names = None
 
         all_frames = []
         frame_to_faces_indices = {}
 
-        while True:
-            ret, im0 = cap.read()
-            if not ret:
-                break
+        if self.roi_video == 'body_movement':
+            all_frames = curr_data[curr_data.frame.isin(need_curr_frames)][self.list_hand_crafted_features].values
+            # all_frames, feature_names = self.add_temporal_features(current_features, self.list_hand_crafted_features, self.binary_features)
+        else:
+            while True:
+                ret, im0 = cap.read()
+                if not ret:
+                    break
 
-            if counter in need_curr_frames:
-                idx = need_curr_frames.index(counter)
-                im0 = cv2.cvtColor(im0, cv2.COLOR_BGR2RGB)
-                if self.roi_video == 'body':
-                    bboxs = curr_data[curr_data.frame==counter][["startX_body","startY_body","endX_body","endY_body"]].values.astype('int')
-                    frame_to_faces_indices[idx] = range(idx, idx + len(bboxs))
-                    for bbox in bboxs:
-                        curr_fr = im0[bbox[1]: bbox[3], bbox[0]: bbox[2]]
+                if counter in need_curr_frames:
+                    idx = need_curr_frames.index(counter)
+                    im0 = cv2.cvtColor(im0, cv2.COLOR_BGR2RGB)
+                    if self.roi_video == 'body' or self.roi_video == 'face':
+                        bboxs = curr_data[curr_data.frame==counter][self.list_bbox].values.astype('int')
+                        frame_to_faces_indices[idx] = range(idx, idx + len(bboxs))
+                        for bbox in bboxs:
+                            curr_fr = im0[bbox[1]: bbox[3], bbox[0]: bbox[2]]
+                            curr_fr = self.pth_processing(Image.fromarray(curr_fr))
+                            all_frames.append(curr_fr)
+                    elif self.roi_video == 'scene':
+                        curr_fr = im0
                         curr_fr = self.pth_processing(Image.fromarray(curr_fr))
                         all_frames.append(curr_fr)
 
-                        # self.draw_box(im0, [bbox[0], bbox[1], bbox[2], bbox[3]])
-                else:
-                    curr_fr = im0
-                    curr_fr = self.pth_processing(Image.fromarray(curr_fr))
-                    all_frames.append(curr_fr)
-            counter += 1
+                counter += 1
 
             # plt.imshow(im0)
             # plt.show()
         cap.release()
         
-        if self.roi_video == 'body':
+        if self.roi_video == 'body' or self.roi_video == 'face':
             all_frames = torch.cat(all_frames, dim=0)
             video_features = self.image_feature_extractor.extract(all_frames).to('cpu')
 
@@ -245,19 +328,90 @@ class DatasetVideo(Dataset):
                         # print(1, face_indices)
                         frame_features.append(video_features[list(face_indices)].mean(dim=0))
             video_features = torch.stack(frame_features)
-        else:
+        elif self.roi_video == 'scene':
             all_frames = torch.cat(all_frames, dim=0)
             video_features = self.image_feature_extractor.extract(all_frames).to('cpu')
+        elif self.roi_video == 'body_movement':
+            # print(all_frames)
+            video_features = torch.tensor(all_frames, dtype=torch.float32)
+            # print(video_features.shape)
 
 
         torch.cuda.empty_cache()
         
+        if self.roi_video == 'body_movement':
+            return {
+                "video_path": full_path_video,
+                "feature_names": self.list_hand_crafted_features,
+                "video": video_features,
+                "label": torch.tensor(label_vec, dtype=torch.float32),
+            }
+        else:
+            return {
+                "video_path": full_path_video,
+                "video": video_features,
+                "label": torch.tensor(label_vec, dtype=torch.float32),
+            }
 
-        return {
-            "video_path": full_path_video,
-            "video": video_features,
-            "label": torch.tensor(label_vec, dtype=torch.float32),
-        }
+    # def add_temporal_features(self, X, feature_names, binary_feature_names):
+    #     """
+    #     Добавляет временные признаки для каждого кадра.
+        
+    #     Args:
+    #         X: np.ndarray, shape = (N, M)
+    #         feature_names: list of str, длина M
+    #         binary_feature_names: list of str — список бинарных признаков
+            
+    #     Returns:
+    #         X_enhanced: np.ndarray, shape = (N, M_new)
+    #         new_feature_names: list of str
+    #     """
+    #     N, M = X.shape
+
+    #     new_columns = []
+    #     new_feature_names = []
+
+    #     for col_idx in range(M):
+    #         feat_name = feature_names[col_idx]
+    #         col_data = X[:, col_idx]
+
+    #         # Сохраняем оригинальный признак
+    #         new_columns.append(col_data.copy())
+    #         new_feature_names.append(feat_name)
+
+    #         # feat_prev
+    #         col_prev = np.roll(col_data, shift=1)
+    #         col_prev[0] = np.nan
+    #         new_columns.append(col_prev)
+    #         new_feature_names.append(f"{feat_name}_prev")
+
+    #         # feat_next
+    #         col_next = np.roll(col_data, shift=-1)
+    #         col_next[-1] = np.nan
+    #         new_columns.append(col_next)
+    #         new_feature_names.append(f"{feat_name}_next")
+
+    #         # feat_delta
+    #         delta = col_data - col_prev
+    #         delta[0] = np.nan
+    #         new_columns.append(delta)
+    #         new_feature_names.append(f"{feat_name}_delta")
+
+    #         # feat_absdelta
+    #         new_columns.append(np.abs(delta))
+    #         new_feature_names.append(f"{feat_name}_absdelta")
+
+    #         # feat_change — только для бинарных
+    #         if feat_name in binary_feature_names:
+    #             change_flag = (delta != 0).astype(float)
+    #             change_flag[0] = np.nan
+    #             new_columns.append(change_flag)
+    #             new_feature_names.append(f"{feat_name}_change")
+
+    #     # Объединяем все признаки
+    #     X_enhanced = np.column_stack(new_columns)
+
+    #     return X_enhanced, new_feature_names
 
     def prepare_data(self):
         """

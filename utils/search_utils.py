@@ -135,7 +135,8 @@ def greedy_search(
                 train_loader,
                 dev_loader,
                 test_loader,
-                metrics_csv_path=csv_filename
+                metrics_csv_path=csv_filename,
+                model_stage=model_stage
             )
 
             is_better = dev_mean > best_metric_for_param
