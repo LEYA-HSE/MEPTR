@@ -187,4 +187,7 @@ synthetic_data/
 tts_synthetic_final/
 
 *.pt
+*.pth
+bad_features
+a.ipynb
 .emovenv
