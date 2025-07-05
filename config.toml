@@ -3,15 +3,13 @@
 # ---------------------------
 
 [datasets.cmu_mosei]
-task = "emotions"
-base_dir = "D:/Databases/CMU-MOSEI/video/"
-csv_path = "{base_dir}/{split}_body_union.csv"
+base_dir = "E:/CMU-MOSEI/video/"
+csv_path = "{base_dir}/{split}_full.csv"
 video_dir  = "{base_dir}/{split}/"
 
 [datasets.fiv2]
-task = "personality_traits"
-base_dir = "E:/Databases/FirstImpressionsV2/"
-csv_path = "{base_dir}/{split}_body_union.csv"
+base_dir = "E:/FirstImpressionsV2/"
+csv_path = "{base_dir}/{split}_FIv2.csv"
 video_dir  = "{base_dir}/{split}/"
 
 # ---------------------------
@@ -20,16 +18,16 @@ video_dir  = "{base_dir}/{split}/"
 [dataloader]
 num_workers = 0
 shuffle = true
-prepare_only = false
+prepare_only = true
 
 # ---------------------------
 # Общие параметры тренировки
 # ---------------------------
 [train.general]
 random_seed = 42                  # фиксируем random seed для воспроизводимости (0 = каждый раз разный)
-subset_size = 0                   # ограничение на количество примеров (0 = использовать весь датасет)
-batch_size = 64                   # размер батча
-num_epochs = 100                  # число эпох тренировки
+subset_size = 50                   # ограничение на количество примеров (0 = использовать весь датасет)
+batch_size = 16                   # размер батча
+num_epochs = 2                  # число эпох тренировки
 max_patience = 25                 # максимальное число эпох без улучшений (для Early Stopping)
 save_best_model = true            # сохранять лучшую модель
 save_prepared_data = true         # сохранять извлеченные признаки (эмбеддинги)
@@ -48,7 +46,7 @@ weight_emotion        = 0.1      # для корректировки лосса 
 weight_pers           = 1        # для корректировки лосса персональных качеств
 pers_loss_type        = 'mae'    # ccc, mae, mse, rmse_bell, rmse_logcosh, RMGL
 flag_emo_weight       = true     # используем веса для дисбаланса эмоциональных классов
-hidden_dim            = 512      # размер скрытого состояния 
+hidden_dim            = 512      # размер скрытого состояния
 num_transformer_heads = 8        # количество attention голов в трансформере
 tr_layer_number       = 5        # количество слоев в трансформере
 mamba_d_state         = 16       # размер состояния в Mamba
@@ -103,4 +101,3 @@ counter_need_frames = 30  # сколько кадров отобрать из в
 image_size = 224          # ширина и высота изображения
 emb_normalize = false     # нормализовать ли вектор L2-нормой
 device = "cuda"           # "cuda" или "cpu", куда грузить модел
-

@@ -29,7 +29,7 @@ EnhancedFusionTransformer,
 FusionTransformerWithProbWeightedFusion
 )
 from utils.schedulers import SmartScheduler
-from data_loading.dataset_multimodal import DatasetVideo
+from data_loading.dataset_multimodal import MultimodalDataset
 from sklearn.utils.class_weight import compute_class_weight
 
 def infinite_loader(loader):
@@ -53,7 +53,7 @@ def pad_to(x, target_size):
     return torch.cat([x, pad], dim=0)
 
 def transform_matrix(matrix):
-    threshold1 = 1 - 1/7 
+    threshold1 = 1 - 1/7
     threshold2 = 1/7
     mask1 = matrix[:, 0] >= threshold1
     result = np.zeros_like(matrix[:, 1:])
@@ -127,72 +127,63 @@ def get_weights(dataloader):
     print('Веса классов emo: ', class_weights_emo)
     return class_weights_emo
 
-def make_dataset_and_loader(config, split: str, audio_feature_extractor: Type = None, text_feature_extractor: Type = None, image_feature_extractor: Type = None, whisper_model: Type = None, only_dataset: str = None):
+def make_dataset_and_loader(
+    config,
+    split: str,
+    modality_processors: dict,
+    modality_extractors: dict,
+    only_dataset: str = None,
+):
     """
-    Универсальная функция: объединяет датасеты или возвращает один при only_dataset.
-    При объединении train-датасетов — использует WeightedRandomSampler для балансировки.
+    Собирает MultimodalDataset и возвращает DataLoader.
+    modality_processors — dict с CLIPProcessor-ами и т.п.
+    modality_extractors  — dict с предобученными моделями.
     """
     datasets = []
 
-    if not hasattr(config, "datasets") or not config.datasets:
+    if not getattr(config, "datasets", None):
         raise ValueError("⛔ В конфиге не указана секция [datasets].")
 
     for dataset_name, dataset_cfg in config.datasets.items():
         if only_dataset and dataset_name != only_dataset:
             continue
 
-        csv_path = dataset_cfg["csv_path"].format(base_dir=dataset_cfg["base_dir"], task=dataset_cfg["task"], split=split)
-        # wav_dir  = dataset_cfg["wav_dir"].format(base_dir=dataset_cfg["base_dir"], split=split)
-        video_dir  = dataset_cfg["video_dir"].format(base_dir=dataset_cfg["base_dir"], task=dataset_cfg["task"], split=split)
-        task = dataset_cfg["task"]
+        csv_path = dataset_cfg["csv_path"].format(
+            base_dir=dataset_cfg["base_dir"],
+            split=split,
+        )
+        video_dir = dataset_cfg["video_dir"].format(
+            base_dir=dataset_cfg["base_dir"],
+            split=split,
+        )
 
-        logging.info(f"[{dataset_name.upper()}], Task={task}, Split={split}: CSV={csv_path}, Video_DIR={video_dir}")
-
-        dataset = DatasetVideo(
-            csv_path=csv_path, 
-            video_dir=video_dir, 
-            config=config, 
-            split=split, 
-            image_feature_extractor=image_feature_extractor,
+        dataset = MultimodalDataset(
+            csv_path=csv_path,
+            video_dir=video_dir,
+            config=config,
+            split=split,
+            modality_processors=modality_processors,
+            modality_feature_extractors=modality_extractors,
             dataset_name=dataset_name,
-            task=task)
-
+            device=config.device,
+        )
         datasets.append(dataset)
 
     if not datasets:
-        raise ValueError(f"⚠️ Для split='{split}' не найдено ни одного подходящего датасета.")
+        raise ValueError(f"⚠️ Для split='{split}' не найдено ни одного датасета.")
 
-    if len(datasets) == 1:
+    full_dataset = datasets[0] if len(datasets) == 1 else torch.utils.data.ConcatDataset(datasets)
 
-        full_dataset = datasets[0]
-        loader = DataLoader(
-            full_dataset,
-            batch_size=config.batch_size,
-            shuffle=(split == "train"),
-            num_workers=config.num_workers,
-            collate_fn=custom_collate_fn
-        )
-    else:
-
-        if split == "train":
-            # sampler = WeightedRandomSampler(weights, num_samples=total, replacement=True)
-            loader = DataLoader(
-                full_dataset,
-                batch_size=config.batch_size,
-                # sampler=sampler,
-                num_workers=config.num_workers,
-                collate_fn=custom_collate_fn
-            )
-        else:
-            loader = DataLoader(
-                full_dataset,
-                batch_size=config.batch_size,
-                shuffle=False,
-                num_workers=config.num_workers,
-                collate_fn=custom_collate_fn
-            )
+    loader = DataLoader(
+        full_dataset,
+        batch_size=config.batch_size,
+        shuffle=(split == "train"),
+        num_workers=config.num_workers,
+        collate_fn=custom_collate_fn,
+    )
 
     return full_dataset, loader
+
 
 def run_emo_eval(model, loader, criterion, device="cuda", mode = "emotion"):
     """
@@ -347,7 +338,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
         model = model_cls(
             input_dim_emotion     = config.image_embedding_dim,
             input_dim_personality = config.image_embedding_dim,
-            len_seq               = config.counter_need_frames, 
+            len_seq               = config.counter_need_frames,
             hidden_dim            = config.hidden_dim,
             out_features          = config.out_features,
             per_activation        = config.per_activation,
@@ -367,7 +358,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
         emo_model = model_cls(
         input_dim_emotion     = config.image_embedding_dim,
         input_dim_personality = config.image_embedding_dim,
-        len_seq               = config.counter_need_frames, 
+        len_seq               = config.counter_need_frames,
         hidden_dim            = config.hidden_dim_emo,
         out_features          = config.out_features_emo,
         tr_layer_number       = config.tr_layer_number_emo,
@@ -385,7 +376,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
         per_model = model_cls(
         input_dim_emotion     = config.image_embedding_dim,
         input_dim_personality = config.image_embedding_dim,
-        len_seq               = config.counter_need_frames, 
+        len_seq               = config.counter_need_frames,
         hidden_dim            = config.hidden_dim_per,
         out_features          = config.out_features_per,
         per_activation        = config.best_per_activation,
@@ -448,12 +439,12 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
 
     if flag_emo_weight:
         emo_weights = get_weights(train_loaders['cmu_mosei'])
-        criterion = MultiTaskLoss(weight_emotion=weight_emotion, 
-                                weight_personality=weight_pers, 
+        criterion = MultiTaskLoss(weight_emotion=weight_emotion,
+                                weight_personality=weight_pers,
                                 emo_weights=torch.FloatTensor(emo_weights).to(device),
                                 personality_loss_type=pers_loss_type)
     else:
-        criterion = MultiTaskLoss(weight_emotion=weight_emotion, 
+        criterion = MultiTaskLoss(weight_emotion=weight_emotion,
                                 weight_personality=weight_pers,
                                 personality_loss_type=pers_loss_type)
     # LR Scheduler
@@ -518,7 +509,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
             logging.info(
                 f"[TRAIN] Loss={train_loss:.4f}, UAR={uar_m:.4f}, MF1={mf1_m:.4f}, "
                 f"MEAN={mean_train:.4f}")
-            
+
         elif model_stage == 'personality':
             # print(222)
             dataloader = train_loaders['fiv2']
@@ -563,7 +554,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
             logging.info(
                 f"[TRAIN] Loss={train_loss:.4f}, mACC={m_acc:.4f}, mCCC={m_ccc:.4f}, "
                 f"MEAN={mean_train:.4f}")
-            
+
         elif model_stage == 'fusion':
             # print(333)
 
@@ -602,7 +593,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
                     if pers_bs < max_bs:
                         pers_input = pad_to(pers_input, max_bs)
                         pers_labels = pad_to(pers_labels, max_bs)
-                
+
                 outputs = model(emotion_input=emo_input, personality_input=pers_input)
                 loss = criterion(outputs, {'emotion': emo_labels, 'personality': pers_labels})
                 loss.backward()
@@ -618,7 +609,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
                 preds_emo, terget_emo =  process_predictions(outputs['emotion_logits'], emo_labels)
                 total_preds_emo.extend(preds_emo)
                 total_targets_emo.extend(terget_emo)
-                
+
                 preds_per = outputs['personality_scores']
                 terget_per = pers_labels
                 total_preds_per.extend(preds_per.cpu().detach().numpy().tolist())
@@ -658,7 +649,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
                     "loss": d_loss, "uar": d_uar,
                     "mf1": d_mf1, "mean": np.mean([d_uar, d_mf1])
                 }
-            
+
             if csv_writer:
                 row = ["dev", epoch, name, *dev_metrics.values()]
                 while len(row) < 9:  # выравнивание колонок
@@ -671,8 +662,8 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
                 "name": name,
                 **dev_metrics
             })
-            
-            
+
+
         elif model_stage == 'personality':
             name = 'fiv2'
             loader = dev_loaders[name]
@@ -709,14 +700,14 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
                     "loss": d_loss, "uar": d_uar,
                     "mf1": d_mf1, "mean": np.mean([d_uar, d_mf1])
                 }
-            
+
             dev_metrics_by_dataset.append({
                 "name": name,
                 **dev_metrics
             })
-            
+
             logging.info(f"[DEV:{name}] " + ", ".join(f"{k.upper()}={v:.4f}" for k, v in dev_metrics.items()))
-            
+
             name = 'fiv2'
             loader = dev_loaders[name]
             d_loss, d_acc, d_ccc = run_per_eval(
@@ -727,7 +718,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
                     "loss": d_loss, "acc": d_acc,
                     "ccc": d_ccc, "mean": np.mean([d_acc, d_ccc])
                 }
-            
+
             logging.info(f"[DEV:{name}] " + ", ".join(f"{k.upper()}={v:.4f}" for k, v in dev_metrics.items()))
 
             dev_metrics_by_dataset.append({
@@ -752,7 +743,7 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
                     "loss": t_loss, "uar": t_uar,
                     "mf1": t_mf1, "mean": np.mean([t_uar, t_mf1])
                 }
-            
+
             if csv_writer:
                 row = ["test", epoch, name, *test_metrics.values()]
                 while len(row) < 9:  # выравнивание колонок
@@ -765,8 +756,8 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
                 "name": name,
                 **test_metrics
             })
-            
-            
+
+
         elif model_stage == 'personality':
             name = 'fiv2'
             loader = test_loaders[name]
@@ -802,14 +793,14 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
                     "loss": t_loss, "uar": t_uar,
                     "mf1": t_mf1, "mean": np.mean([t_uar, t_mf1])
                 }
-            
+
             test_metrics_by_dataset.append({
                 "name": name,
                 **test_metrics
             })
-            
+
             logging.info(f"[TEST:{name}] " + ", ".join(f"{k.upper()}={v:.4f}" for k, v in test_metrics.items()))
-            
+
             name = 'fiv2'
             loader = test_loaders[name]
             t_loss, t_acc, t_ccc = run_per_eval(
@@ -820,14 +811,14 @@ def train_once(config, train_loaders, dev_loaders, test_loaders, metrics_csv_pat
                     "loss": t_loss, "acc": t_acc,
                     "ccc": t_ccc, "mean": np.mean([t_acc, t_ccc])
                 }
-            
+
             logging.info(f"[TEST:{name}] " + ", ".join(f"{k.upper()}={v:.4f}" for k, v in test_metrics.items()))
 
             test_metrics_by_dataset.append({
                 "name": name,
                 **test_metrics
             })
-        
+
         mean_test = np.mean(test_means)
 
         if config.opt_set == "test":

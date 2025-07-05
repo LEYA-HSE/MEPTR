@@ -182,6 +182,4 @@ results_*/
 modules/
 hub/
 features/
-saved_merges/
-synthetic_data/
-tts_synthetic_final/
+extractors/
