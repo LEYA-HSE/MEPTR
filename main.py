@@ -11,7 +11,7 @@ import toml
 from utils.config_loader import ConfigLoader
 from utils.logger_setup import setup_logger
 from utils.search_utils import greedy_search, exhaustive_search
-from training.train_utils_video import (
+from training.train_utils import (
     make_dataset_and_loader,
     train_once
 )
@@ -23,7 +23,7 @@ def main():
 
     model_name = base_config.model_name.replace("/", "_").replace(" ", "_").lower()
     timestamp  = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    results_dir = f"results_{model_name}_{timestamp}"
+    results_dir = f"results/results_{model_name}_{timestamp}"
     os.makedirs(results_dir, exist_ok=True)
 
     epochlog_dir = os.path.join(results_dir, "metrics_by_epoch")
@@ -40,8 +40,8 @@ def main():
 
 
     # ──────────────────── 3. Процессор + экстракторы ────────────────
-    image_feature_extractor = PretrainedImageEmbeddingExtractor(device=base_config.emb_device)
-    clip_processor = image_feature_extractor.processor          # единственный CLIPProcessor
+    image_feature_extractor = PretrainedImageEmbeddingExtractor( device=base_config.device)
+    clip_processor = image_feature_extractor.processor
 
     modality_processors = {
         "body": clip_processor,

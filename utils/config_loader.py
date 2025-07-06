@@ -115,7 +115,7 @@ class ConfigLoader:
         self.out_features = train_model.get("out_features", 128)
         self.mode = train_model.get("mode", "mean")
         self.fusion_dim = train_model.get("fusion_dim", 64)
-        
+
         # параметры для лучших эмоциональной и персональной моделей
         self.hidden_dim_emo = train_model.get("hidden_dim_emo", 256)
         self.out_features_emo = train_model.get("out_features_emo", 256)
@@ -174,7 +174,7 @@ class ConfigLoader:
         self.audio_pooling = emb_cfg.get("audio_pooling", None)
         self.text_pooling  = emb_cfg.get("text_pooling", None)
         self.max_tokens = emb_cfg.get("max_tokens", 256)
-        self.emb_device = emb_cfg.get("device", "cuda")
+        self.device = emb_cfg.get("device", "cuda")
         self.window_size = emb_cfg.get("window_size", 5)
 
         # ---------------------------
@@ -239,7 +239,7 @@ class ConfigLoader:
         logging.info(f"Audio Model: {self.audio_model_name}, Text Model: {self.text_model_name}")
         logging.info(f"Audio dim={self.audio_embedding_dim}, Text dim={self.text_embedding_dim}")
         logging.info(f"Audio pooling={self.audio_pooling}, Text pooling={self.text_pooling}")
-        logging.info(f"Emb device={self.emb_device}, Normalize={self.emb_normalize}")
+        logging.info(f"Emb device={self.device}, Normalize={self.emb_normalize}")
 
     def show_config(self):
         self.log_config()

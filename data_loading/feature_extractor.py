@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from transformers import CLIPProcessor
+from transformers import CLIPProcessor,CLIPModel
 from utils.body.model_loader import get_fusion_model
 
 class PretrainedImageEmbeddingExtractor:
@@ -13,6 +13,7 @@ class PretrainedImageEmbeddingExtractor:
                  clip_name: str = "openai/clip-vit-base-patch32"):
         self.device = device
         self.processor = CLIPProcessor.from_pretrained(clip_name)
+        self.clip_model = CLIPModel.from_pretrained(clip_name).to(self.device)
         self.body_model = get_fusion_model("body", device)
         self.face_model = get_fusion_model("face", device)
 
@@ -25,9 +26,11 @@ class PretrainedImageEmbeddingExtractor:
         results = {}
 
         if body_tensor is not None:
+            body_tensor = self.clip_model.get_image_features(body_tensor.to(self.device))
+            print(body_tensor.shape)
             body_out = self.body_model(
-                emotion_input=body_tensor.to(self.device),
-                personality_input=body_tensor.to(self.device),
+                emotion_input=torch.unsqueeze(body_tensor, 0),
+                personality_input=torch.unsqueeze(body_tensor, 0),
                 return_features=True,
             )
             results["body"] = {
@@ -38,9 +41,10 @@ class PretrainedImageEmbeddingExtractor:
             }
 
         if face_tensor is not None:
+            face_tensor = self.clip_model.get_image_features(face_tensor.to(self.device))
             face_out = self.face_model(
-                emotion_input=face_tensor.to(self.device),
-                personality_input=face_tensor.to(self.device),
+                emotion_input=torch.unsqueeze(face_tensor, 0),
+                personality_input=torch.unsqueeze(face_tensor, 0),
                 return_features=True,
             )
             results["face"] = {

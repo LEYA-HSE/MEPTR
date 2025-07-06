@@ -5,6 +5,7 @@ import pandas as pd
 from tqdm import tqdm
 import torch
 from torch.utils.data import Dataset
+import logging
 
 # извлекает кадровые ROI + превращает их в тензоры
 from utils.body.extractor import get_metadata
@@ -37,6 +38,7 @@ class MultimodalDataset(Dataset):
         self.dataset_name      = dataset_name
         self.device            = device
         self.segment_length    = config.counter_need_frames
+        self.subset_size       = config.subset_size
 
         # ───────── словари модальностей ─────────
         self.modality_processors         = modality_processors
@@ -47,15 +49,28 @@ class MultimodalDataset(Dataset):
         self.save_feature_path  = config.save_feature_path
         self.feature_filename   = (
             f"{self.dataset_name}_{self.split}"
-            f"_seed_{config.random_seed}_subset_size_{config.subset_size}"
+            f"_seed_{config.random_seed}_subset_size_{self.subset_size}"
             f"_seg_{self.segment_length}_roi_{config.roi_video}"
             f"_video_model_{config.image_model_type}_feature_norm_{config.emb_normalize}.pickle"
         )
 
         self.meta: list[dict] = []
 
+        # ───── установка лейблов ─────
+        if self.dataset_name == 'cmu_mosei':
+            self.label_columns = ["Neutral", "Anger", "Disgust", "Fear", "Happiness", "Sadness", "Surprise"]
+        elif self.dataset_name == 'fiv2':
+            self.label_columns = ["openness", "conscientiousness", "extraversion", "agreeableness", "non-neuroticism"]
+        else:
+            raise ValueError(f"Неизвестное имя датасета: {self.dataset_name}")
+
         # ───────── читаем CSV ─────────
         self.df = pd.read_csv(self.csv_path).dropna()
+
+        if self.subset_size > 0:
+            self.df = self.df.head(self.subset_size)
+            logging.info(f"[DatasetMultiModal] Используем только первые {len(self.df)} записей (subset_size={self.subset_size}).")
+
         self.video_names = sorted(self.df["video_name"].unique())
 
         # ───────── либо грузим из pickle, либо готовим заново ─────────
@@ -72,11 +87,22 @@ class MultimodalDataset(Dataset):
 
     # ──────────────────────────────────────────────────────────────────
     # служебка
-    def find_file_recursive(self, base_dir: str, filename: str):
-        for root, _, files in os.walk(base_dir):
-            if filename in files:
-                return os.path.join(root, filename)
-        return None
+    def find_file_recursive(self, base_dir: str, base_filename: str):
+        if self.dataset_name == "fiv2":
+            # Здесь base_filename уже содержит расширение (например .mp4)
+            for root, _, files in os.walk(base_dir):
+                for file in files:
+                    if file == base_filename:  # Сравниваем с полным именем файла
+                        return os.path.join(root, file)
+            return None
+        else:
+            # Универсальный случай — сравниваем по имени без расширения
+            for root, _, files in os.walk(base_dir):
+                for file in files:
+                    name_without_ext = os.path.splitext(file)[0]
+                    if name_without_ext == base_filename:
+                        return os.path.join(root, file)
+            return None
 
     # ──────────────────────────────────────────────────────────────────
     # извлечение фичей
@@ -108,14 +134,19 @@ class MultimodalDataset(Dataset):
                     face_tensor = face_tensor,
                 )
 
-                # аккуратно берём, что вернулось (может быть только body или face)
                 entry["features"]["body"] = extracted.get("body")
                 entry["features"]["face"] = extracted.get("face")
+
+                entry["label"] = torch.tensor(
+                    self.df[self.df["video_name"] == name][self.label_columns].values[0],
+                    dtype=torch.float32
+                )
 
             except Exception as e:
                 print(f"⚠️ Ошибка при извлечении фичей для {name}: {e}")
                 entry["features"]["body"] = None
                 entry["features"]["face"] = None
+                entry["label"] = torch.tensor([])
 
             # ── заглушки под будущие модальности ──
             entry["features"]["audio"] = None
