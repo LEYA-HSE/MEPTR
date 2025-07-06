@@ -3,14 +3,16 @@
 # ---------------------------
 
 [datasets.cmu_mosei]
-base_dir = "E:/CMU-MOSEI/video/"
+base_dir = "E:/CMU-MOSEI/"
 csv_path = "{base_dir}/{split}_full.csv"
-video_dir  = "{base_dir}/{split}/"
+video_dir  = "{base_dir}/video/{split}/"
+audio_dir = "{base_dir}/audio/{split}/"
 
 [datasets.fiv2]
 base_dir = "E:/FirstImpressionsV2/"
-csv_path = "{base_dir}/{split}_FIv2.csv"
-video_dir  = "{base_dir}/{split}/"
+csv_path = "{base_dir}/{split}_full.csv"
+video_dir  = "{base_dir}/video/{split}/"
+audio_dir = "{base_dir}/audio/{split}/"
 
 # ---------------------------
 # DataLoader параметры
@@ -25,7 +27,7 @@ prepare_only = true
 # ---------------------------
 [train.general]
 random_seed = 42                  # фиксируем random seed для воспроизводимости (0 = каждый раз разный)
-subset_size = 10                   # ограничение на количество примеров (0 = использовать весь датасет)
+subset_size = 2                   # ограничение на количество примеров (0 = использовать весь датасет)
 batch_size = 16                   # размер батча
 num_epochs = 2                  # число эпох тренировки
 max_patience = 25                 # максимальное число эпох без улучшений (для Early Stopping)

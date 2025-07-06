@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from transformers import CLIPProcessor,CLIPModel
-from utils.body.model_loader import get_fusion_model
+from modalities.body.model_loader import get_fusion_model
 
 class PretrainedImageEmbeddingExtractor:
     """

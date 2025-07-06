@@ -16,6 +16,7 @@ from training.train_utils import (
     train_once
 )
 from data_loading.feature_extractor import PretrainedImageEmbeddingExtractor
+from modalities.audio.feature_extractor import PretrainedAudioEmbeddingExtractor
 
 def main():
     # ──────────────────── 1. Конфиг и директории ────────────────────
@@ -39,14 +40,14 @@ def main():
     csv_prefix     = os.path.join(epochlog_dir, "metrics_epochlog")
 
 
-    # ──────────────────── 3. Процессор + экстракторы ────────────────
+    # ──────────────────── 3. Процессоры + экстракторы ────────────────
     image_feature_extractor = PretrainedImageEmbeddingExtractor( device=base_config.device)
-    clip_processor = image_feature_extractor.processor
+    audio_feature_extractor = PretrainedAudioEmbeddingExtractor(device=base_config.device)
 
     modality_processors = {
-        "body": clip_processor,
-        "face": clip_processor,
-        "audio": None,
+        "body": image_feature_extractor.processor,
+        "face": image_feature_extractor.processor,
+        "audio": audio_feature_extractor.processor,
         "text":  None,
         "scene": None,
     }
@@ -54,7 +55,7 @@ def main():
     modality_extractors = {
         "body": image_feature_extractor,
         "face": image_feature_extractor,
-        "audio": None,
+        "audio": audio_feature_extractor,
         "text":  None,
         "scene": None,
     }

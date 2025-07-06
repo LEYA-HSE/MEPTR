@@ -178,8 +178,8 @@ db/
 logs/
 .old/
 .logs/
-results_*/
+results/
 modules/
 hub/
 features/
-extractors/
+checkpoints

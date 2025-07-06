@@ -8,7 +8,7 @@ from torch.utils.data import Dataset
 import logging
 
 # извлекает кадровые ROI + превращает их в тензоры
-from utils.body.extractor import get_metadata
+from modalities.body.extractor import get_metadata
 
 
 class MultimodalDataset(Dataset):
@@ -21,6 +21,7 @@ class MultimodalDataset(Dataset):
         self,
         csv_path,
         video_dir,
+        audio_dir,
         config,
         split,
         modality_processors,
@@ -33,6 +34,7 @@ class MultimodalDataset(Dataset):
         # ───────── базовые поля ─────────
         self.csv_path          = csv_path
         self.video_dir         = video_dir
+        self.audio_dir         = audio_dir
         self.config            = config
         self.split             = split
         self.dataset_name      = dataset_name
@@ -88,34 +90,32 @@ class MultimodalDataset(Dataset):
     # ──────────────────────────────────────────────────────────────────
     # служебка
     def find_file_recursive(self, base_dir: str, base_filename: str):
-        if self.dataset_name == "fiv2":
-            # Здесь base_filename уже содержит расширение (например .mp4)
-            for root, _, files in os.walk(base_dir):
-                for file in files:
-                    if file == base_filename:  # Сравниваем с полным именем файла
-                        return os.path.join(root, file)
-            return None
-        else:
-            # Универсальный случай — сравниваем по имени без расширения
-            for root, _, files in os.walk(base_dir):
-                for file in files:
-                    name_without_ext = os.path.splitext(file)[0]
-                    if name_without_ext == base_filename:
-                        return os.path.join(root, file)
-            return None
+        for root, _, files in os.walk(base_dir):
+            for file in files:
+                if os.path.splitext(file)[0] == base_filename:
+                    return os.path.join(root, file)
+        return None
 
     # ──────────────────────────────────────────────────────────────────
     # извлечение фичей
     def prepare_data(self):
+
         for name in tqdm(self.video_names, desc="Extracting multimodal features"):
+
             video_path = self.find_file_recursive(self.video_dir, name)
+            audio_path = self.find_file_recursive(self.audio_dir, name)
+
             if video_path is None:
                 print(f"❌ Видео не найдено: {name}")
                 continue
+            if audio_path is None:
+                print(f"❌ Аудио не найдено: {name}")
+                continue
 
             entry = {
-                "video_name": name,
+                "sample_name": name,
                 "video_path": video_path,
+                "audio_path": audio_path,
                 "features": {},
             }
 
@@ -137,21 +137,30 @@ class MultimodalDataset(Dataset):
                 entry["features"]["body"] = extracted.get("body")
                 entry["features"]["face"] = extracted.get("face")
 
-                entry["label"] = torch.tensor(
-                    self.df[self.df["video_name"] == name][self.label_columns].values[0],
-                    dtype=torch.float32
-                )
-
             except Exception as e:
                 print(f"⚠️ Ошибка при извлечении фичей для {name}: {e}")
                 entry["features"]["body"] = None
                 entry["features"]["face"] = None
-                entry["label"] = torch.tensor([])
+
+            try:
+                audio_feats = self.extractors["audio"].extract(audio_path=audio_path)
+                entry["features"]["audio"] = audio_feats
+            except Exception as e:
+                print(f"⚠️ Ошибка при извлечении аудио для {name}: {e}")
+                entry["features"]["audio"] = None
 
             # ── заглушки под будущие модальности ──
-            entry["features"]["audio"] = None
             entry["features"]["text"]  = None
             entry["features"]["scene"] = None
+
+            try:
+                entry["label"] = torch.tensor(
+                    self.df[self.df["video_name"] == name][self.label_columns].values[0],
+                    dtype=torch.float32
+                )
+            except Exception as e:
+                print(f"⚠️ Ошибка при извлечении лейблов для {name}: {e}")
+                entry["label"] = torch.tensor([])
 
             self.meta.append(entry)
             torch.cuda.empty_cache()

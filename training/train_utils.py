@@ -157,9 +157,15 @@ def make_dataset_and_loader(
             split=split,
         )
 
+        audio_dir = dataset_cfg["audio_dir"].format(
+            base_dir=dataset_cfg["base_dir"],
+            split=split,
+        )
+
         dataset = MultimodalDataset(
             csv_path=csv_path,
             video_dir=video_dir,
+            audio_dir=audio_dir,
             config=config,
             split=split,
             modality_processors=modality_processors,

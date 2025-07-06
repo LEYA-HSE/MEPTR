@@ -199,6 +199,7 @@ class ConfigLoader:
             logging.info(f"  CSV Path: {ds.get('csv_path', '')}")
             logging.info(f"  WAV Dir: {ds.get('wav_dir', 'N/A')}")
             logging.info(f"  Video Dir: {ds.get('video_dir', '')}")
+            logging.info(f"  Audio Dir: {ds.get('audio_dir', '')}")
 
         # Логируем обучающие параметры
         logging.info("--- Training Config ---")
