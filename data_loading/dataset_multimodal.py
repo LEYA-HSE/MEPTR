@@ -149,8 +149,15 @@ class MultimodalDataset(Dataset):
                 print(f"⚠️ Ошибка при извлечении аудио для {name}: {e}")
                 entry["features"]["audio"] = None
 
+            try:
+                text_feats = self.extractors["text"].extract(self.df[self.df["video_name"] == name]["text"].values[0])
+                entry["features"]["text"] = text_feats
+            except Exception as e:
+                print(f"⚠️ Ошибка при извлечении текста для {name}: {e}")
+                entry["features"]["text"] = None
+
             # ── заглушки под будущие модальности ──
-            entry["features"]["text"]  = None
+
             entry["features"]["scene"] = None
 
             try:

@@ -1,10 +1,8 @@
-# train.py
 # coding: utf-8
 import logging
 import os
 import shutil
 import datetime
-# import whisper
 import toml
 # os.environ["HF_HOME"] = "models"
 
@@ -17,6 +15,7 @@ from training.train_utils import (
 )
 from data_loading.feature_extractor import PretrainedImageEmbeddingExtractor
 from modalities.audio.feature_extractor import PretrainedAudioEmbeddingExtractor
+from modalities.text.feature_extractor import PretrainedTextEmbeddingExtractor
 
 def main():
     # ──────────────────── 1. Конфиг и директории ────────────────────
@@ -43,6 +42,7 @@ def main():
     # ──────────────────── 3. Процессоры + экстракторы ────────────────
     image_feature_extractor = PretrainedImageEmbeddingExtractor( device=base_config.device)
     audio_feature_extractor = PretrainedAudioEmbeddingExtractor(device=base_config.device)
+    text_feature_extractor = PretrainedTextEmbeddingExtractor(device=base_config.device)
 
     modality_processors = {
         "body": image_feature_extractor.processor,
@@ -56,7 +56,7 @@ def main():
         "body": image_feature_extractor,
         "face": image_feature_extractor,
         "audio": audio_feature_extractor,
-        "text":  None,
+        "text":  text_feature_extractor,
         "scene": None,
     }
 
