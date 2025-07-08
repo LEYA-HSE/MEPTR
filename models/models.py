@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from .help_layers import TransformerEncoderLayer
 from data_loading.pretrained_extractors import CustomMambaBlock
-        
+
 class EmotionMamba(nn.Module):
     def __init__(self, input_dim_emotion=512, input_dim_personality=512, len_seq = 30, hidden_dim=128, out_features=512, mamba_layer_number=2, mamba_d_model=256, per_activation="sigmoid", positional_encoding=True, num_transformer_heads=4, tr_layer_number=1, dropout=0.1, num_emotions=7, num_traits=5, device='cpu'):
         super().__init__()
@@ -23,7 +23,7 @@ class EmotionMamba(nn.Module):
             nn.LayerNorm(hidden_dim),
             nn.Dropout(dropout)
         )
-        
+
         self.emotion_encoder = nn.ModuleList([
             CustomMambaBlock(hidden_dim, mamba_d_model, dropout=dropout)
             for _ in range(mamba_layer_number)
@@ -44,7 +44,7 @@ class EmotionMamba(nn.Module):
             emo = layer(emo)
 
         out_emo = self.emotion_fc_out(emo.mean(dim=1))  # (B, num_emotions)
-        
+
         if return_features:
             return {
                 'emotion_logits': out_emo,
@@ -52,7 +52,7 @@ class EmotionMamba(nn.Module):
             }
         else:
             return {'emotion_logits': out_emo}
-    
+
 class PersonalityMamba(nn.Module):
     def __init__(self, input_dim_emotion=512, input_dim_personality=512, len_seq = 30, hidden_dim=128, out_features=512, mamba_layer_number=2, mamba_d_model=256, per_activation="sigmoid", positional_encoding=True, num_transformer_heads=4, tr_layer_number=1, dropout=0.1, num_emotions=7, num_traits=5, device='cpu'):
         super().__init__()
@@ -71,7 +71,7 @@ class PersonalityMamba(nn.Module):
             nn.LayerNorm(hidden_dim),
             nn.Dropout(dropout)
         )
-        
+
         self.personality_encoder = nn.ModuleList([
             CustomMambaBlock(hidden_dim, mamba_d_model, dropout=dropout)
             for _ in range(mamba_layer_number)
@@ -97,7 +97,7 @@ class PersonalityMamba(nn.Module):
             per = layer(per)
 
         out_per = self.personality_fc_out(per.mean(dim=1))
-    
+
         if return_features:
             return {
                 'personality_scores': self.activation(out_per) if activation else out_per,
@@ -105,19 +105,12 @@ class PersonalityMamba(nn.Module):
             }
         else:
             return {'personality_scores': self.activation(out_per) if activation else out_per}
-    
+
 class EmotionTransformer(nn.Module):
     def __init__(self, input_dim_emotion=512, input_dim_personality=512, len_seq = 30, hidden_dim=128, out_features=512, mamba_layer_number=2, mamba_d_model=256, per_activation="sigmoid", positional_encoding=True, num_transformer_heads=4, tr_layer_number=1, dropout=0.1, num_emotions=7, num_traits=5, device='cpu'):
         super().__init__()
 
         self.hidden_dim = hidden_dim
-
-        # self.emo_proj = nn.Sequential(
-        #     nn.Linear(input_dim_emotion, hidden_dim),
-        #     # nn.BatchNorm1d(len_seq),
-        #     nn.LayerNorm(hidden_dim),
-        #     nn.Dropout(dropout)
-        # )
 
         self.emo_proj = nn.Sequential(
             # nn.BatchNorm1d(len_seq),
@@ -150,7 +143,7 @@ class EmotionTransformer(nn.Module):
             emo += layer(emo, emo, emo)
 
         out_emo = self.emotion_fc_out(emo.mean(dim=1))  # (B, num_emotions)
-        
+
         if return_features:
             return {
                 'emotion_logits': out_emo,
@@ -158,19 +151,13 @@ class EmotionTransformer(nn.Module):
             }
         else:
             return {'emotion_logits': out_emo}
-    
+
 class PersonalityTransformer(nn.Module):
     def __init__(self, input_dim_emotion=512, input_dim_personality=512, len_seq = 30, hidden_dim=128, out_features=512, mamba_layer_number=2, mamba_d_model=256, per_activation="sigmoid", positional_encoding=True, num_transformer_heads=4, tr_layer_number=1, dropout=0.1, num_emotions=7, num_traits=5, device='cpu'):
         super().__init__()
 
         self.hidden_dim = hidden_dim
 
-        # self.per_proj = nn.Sequential(
-        #     nn.Linear(input_dim_personality, hidden_dim),
-        #     # nn.BatchNorm1d(len_seq),
-        #     nn.LayerNorm(hidden_dim),
-        #     nn.Dropout(dropout)
-        # )
         self.per_proj = nn.Sequential(
             # nn.BatchNorm1d(len_seq),
             nn.Linear(input_dim_personality, hidden_dim),
@@ -207,7 +194,7 @@ class PersonalityTransformer(nn.Module):
             per += layer(per, per, per)
 
         out_per = self.personality_fc_out(per.mean(dim=1))
-        
+
         if return_features:
             return {
                 'personality_scores': self.activation(out_per) if activation else out_per,
@@ -215,11 +202,11 @@ class PersonalityTransformer(nn.Module):
             }
         else:
             return {'personality_scores': self.activation(out_per) if activation else out_per}
-    
+
 class FusionTransformer(nn.Module):
-    def __init__(self, emo_model, per_model, input_dim_emotion=512, input_dim_personality=512, 
-                 hidden_dim=128, out_features=512, mamba_layer_number=2, mamba_d_model=256, 
-                 per_activation="sigmoid", positional_encoding=True, num_transformer_heads=4, 
+    def __init__(self, emo_model, per_model, input_dim_emotion=512, input_dim_personality=512,
+                 hidden_dim=128, out_features=512, mamba_layer_number=2, mamba_d_model=256,
+                 per_activation="sigmoid", positional_encoding=True, num_transformer_heads=4,
                  tr_layer_number=1, dropout=0.1, num_emotions=7, num_traits=5, device='cpu'):
         super().__init__()
 
@@ -278,7 +265,7 @@ class FusionTransformer(nn.Module):
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(out_features, num_traits)
-        )        
+        )
 
         if per_activation == "sigmoid":
             self.activation = nn.Sigmoid()
@@ -314,11 +301,11 @@ class FusionTransformer(nn.Module):
         else:
             return {'emotion_logits': (emotion_logits+emo_features['emotion_logits'])/2,
                     'personality_scores': (personality_scores+per_features['personality_scores'])/2,}
-        
+
 class EnhancedFusionTransformer(nn.Module):
-    def __init__(self, emo_model, per_model, input_dim_emotion=512, input_dim_personality=512, 
+    def __init__(self, emo_model, per_model, input_dim_emotion=512, input_dim_personality=512,
                  hidden_dim=256, out_features=512, per_activation="sigmoid", mamba_layer_number=2, mamba_d_model=256,
-                 positional_encoding=True, num_transformer_heads=8, tr_layer_number=2, 
+                 positional_encoding=True, num_transformer_heads=8, tr_layer_number=2,
                  dropout=0.2, num_emotions=7, num_traits=5, device='cpu'):
         super().__init__()
 
@@ -412,17 +399,17 @@ class EnhancedFusionTransformer(nn.Module):
 
         # Конкатенация и адаптивное взвешивание
         fused = torch.cat([emo_emb, per_emb], dim=-1)
-        
+
         # Средний пулинг с сохранением размерности [batch, seq, features] -> [batch, features]
         pooled = fused.mean(dim=1)
-        
+
         # Вычисляем доменные веса
         domain_weights = self.softmax(self.domain_weights)
-        
+
         # Прогнозирование с адаптивным взвешиванием
         emotion_logits = self.emotion_head(pooled) * domain_weights[0]
         personality_scores = self.personality_head(pooled) * domain_weights[1]
-        
+
         # Residual connection с оригинальными предсказаниями
         emotion_logits = (emotion_logits + emo_features['emotion_logits']) / 2
         personality_scores = (self.per_activation(personality_scores) + per_features['personality_scores']) / 2
@@ -440,7 +427,7 @@ class EnhancedFusionTransformer(nn.Module):
                 'emotion_logits': emotion_logits,
                 'personality_scores': personality_scores
             }
-        
+
 class ProbabilityFusion(nn.Module):
     def __init__(self, num_matrices=2, num_classes=7):
         super(ProbabilityFusion, self).__init__()
@@ -451,11 +438,11 @@ class ProbabilityFusion(nn.Module):
         normalized_weights = torch.softmax(self.weights, dim=0)
         weighted_matrix = sum(mat * normalized_weights[i] for i, mat in enumerate(pred))
         return weighted_matrix, normalized_weights
-    
+
 class FusionTransformerWithProbWeightedFusion(nn.Module):
     def __init__(self, emo_model, per_model, input_dim_emotion=512, input_dim_personality=512, mamba_layer_number=2, mamba_d_model=256,
-                 hidden_dim=256, out_features=512, per_activation="sigmoid", 
-                 positional_encoding=True, num_transformer_heads=8, tr_layer_number=2, 
+                 hidden_dim=256, out_features=512, per_activation="sigmoid",
+                 positional_encoding=True, num_transformer_heads=8, tr_layer_number=2,
                  dropout=0.2, num_emotions=7, num_traits=5, device='cpu'):
         super().__init__()
 
@@ -548,10 +535,10 @@ class FusionTransformerWithProbWeightedFusion(nn.Module):
 
         # Конкатенация и адаптивное взвешивание
         fused = torch.cat([emo_emb, per_emb], dim=-1)
-        
+
         # Средний пулинг с сохранением размерности [batch, seq, features] -> [batch, features]
         pooled = fused.mean(dim=1)
-        
+
         emotion_logits = self.emotion_head(pooled)
         personality_scores = self.personality_head(pooled)
 
@@ -572,7 +559,7 @@ class FusionTransformerWithProbWeightedFusion(nn.Module):
                 'emotion_logits': emotion_logits,
                 'personality_scores': personality_scores
             }
-        
+
 class FusionTransformer2(nn.Module):
     def __init__(self, emo_model, per_model, input_dim_emotion=512, input_dim_personality=512, hidden_dim=128, out_features=512, mamba_layer_number=2, mamba_d_model=256, per_activation="sigmoid", positional_encoding=True, num_transformer_heads=4, tr_layer_number=1, dropout=0.1, num_emotions=7, num_traits=5, device='cpu'):
         super().__init__()
@@ -632,7 +619,7 @@ class FusionTransformer2(nn.Module):
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(out_features, num_traits)
-        )        
+        )
 
         if per_activation == "sigmoid":
             self.activation = nn.Sigmoid()

@@ -8,7 +8,7 @@ from torch.utils.data import Dataset
 import logging
 
 # извлекает кадровые ROI + превращает их в тензоры
-from modalities.body.extractor import get_metadata
+from modalities.video.extractor import get_metadata
 
 
 class MultimodalDataset(Dataset):
@@ -121,7 +121,7 @@ class MultimodalDataset(Dataset):
 
             try:
                 # --- детекция и препроцессинг кадров -----------------------
-                _, body_tensor, face_tensor = get_metadata(
+                _, body_tensor, face_tensor, scene_tensor = get_metadata(
                     video_path      = video_path,
                     segment_length  = self.segment_length,
                     image_processor = self.modality_processors.get("body"),
@@ -132,15 +132,18 @@ class MultimodalDataset(Dataset):
                 extracted = self.extractors["body"].extract(
                     body_tensor = body_tensor,
                     face_tensor = face_tensor,
+                    scene_tensor = scene_tensor,
                 )
 
                 entry["features"]["body"] = extracted.get("body")
                 entry["features"]["face"] = extracted.get("face")
+                entry["features"]["scene"] = extracted.get("scene")
 
             except Exception as e:
                 print(f"⚠️ Ошибка при извлечении фичей для {name}: {e}")
                 entry["features"]["body"] = None
                 entry["features"]["face"] = None
+                entry["features"]["scene"] = None
 
             try:
                 audio_feats = self.extractors["audio"].extract(audio_path=audio_path)
@@ -155,10 +158,6 @@ class MultimodalDataset(Dataset):
             except Exception as e:
                 print(f"⚠️ Ошибка при извлечении текста для {name}: {e}")
                 entry["features"]["text"] = None
-
-            # ── заглушки под будущие модальности ──
-
-            entry["features"]["scene"] = None
 
             try:
                 entry["label"] = torch.tensor(

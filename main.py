@@ -13,7 +13,7 @@ from training.train_utils import (
     make_dataset_and_loader,
     train_once
 )
-from data_loading.feature_extractor import PretrainedImageEmbeddingExtractor
+from modalities.video.feature_extractor import PretrainedImageEmbeddingExtractor
 from modalities.audio.feature_extractor import PretrainedAudioEmbeddingExtractor
 from modalities.text.feature_extractor import PretrainedTextEmbeddingExtractor
 
@@ -49,7 +49,7 @@ def main():
         "face": image_feature_extractor.processor,
         "audio": audio_feature_extractor.processor,
         "text":  None,
-        "scene": None,
+        "scene": image_feature_extractor.processor,
     }
 
     modality_extractors = {
@@ -57,7 +57,7 @@ def main():
         "face": image_feature_extractor,
         "audio": audio_feature_extractor,
         "text":  text_feature_extractor,
-        "scene": None,
+        "scene": image_feature_extractor,
     }
 
     # ──────────────────── 4. Даталоадеры ────────────────────────────
