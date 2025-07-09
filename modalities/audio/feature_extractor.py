@@ -41,10 +41,12 @@ class PretrainedAudioEmbeddingExtractor:
         elif isinstance(waveform, torch.Tensor):
             waveform = waveform.squeeze().cpu().numpy()
         else:
-            waveform = np.squeeze(waveform)
+            waveform = np.asarray(waveform).squeeze()
 
         if waveform.ndim == 1:
-            waveform = np.expand_dims(waveform, axis=0)
+            waveform = waveform[None, :]  # [1, num_samples]
+        elif waveform.ndim == 2 and waveform.shape[0] > waveform.shape[1]:
+            waveform = waveform.T  # Вдруг [num_samples, 1] случайно
 
         inputs = self.processor(
             waveform,

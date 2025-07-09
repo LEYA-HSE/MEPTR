@@ -154,8 +154,6 @@ class FusionTransformer(nn.Module):
                 'personality_scores': final_per,
                 'last_emo_encoder_features': emo_emd,
                 'last_per_encoder_features': per_emd,
-                # 'last_emo_encoder_features': fe,
-                # 'last_per_encoder_features': fp,
             } if return_features else {
                 'emotion_logits': final_emo,
                 'personality_scores': final_per,

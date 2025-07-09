@@ -42,6 +42,7 @@ class PretrainedTextEmbeddingExtractor:
             personality_input=hidden,
             return_features=True,
         )
+
         return {
             "emotion_logits": out["emotion_logits"],
             "personality_scores": out["personality_scores"],

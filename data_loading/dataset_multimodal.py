@@ -41,6 +41,7 @@ class MultimodalDataset(Dataset):
         self.device            = device
         self.segment_length    = config.counter_need_frames
         self.subset_size       = config.subset_size
+        self.average_features  = config.average_features
 
         # ───────── словари модальностей ─────────
         self.modality_processors         = modality_processors
@@ -52,8 +53,7 @@ class MultimodalDataset(Dataset):
         self.feature_filename   = (
             f"{self.dataset_name}_{self.split}"
             f"_seed_{config.random_seed}_subset_size_{self.subset_size}"
-            f"_seg_{self.segment_length}_roi_{config.roi_video}"
-            f"_video_model_{config.image_model_type}_feature_norm_{config.emb_normalize}.pickle"
+            f"_average_features_{self.average_features}_feature_norm_{config.emb_normalize}.pickle"
         )
 
         self.meta: list[dict] = []
@@ -98,6 +98,40 @@ class MultimodalDataset(Dataset):
 
     # ──────────────────────────────────────────────────────────────────
     # извлечение фичей
+
+    def aggregate_features(self, features, average: bool):
+
+        """
+        Унифицированная агрегация фичей.
+
+        Args:
+            features (Union[Tensor, dict, None]): Входные фичи.
+            average (bool): Если True — усредняет по времени (dim=1), если применимо.
+
+        Returns:
+            Aggregated features или None.
+
+        - Если features = Tensor с shape [B, T, D] и average=True → усредняет по T.
+        - Если average=False → возвращает как есть.
+        - Если features — dict → обходит рекурсивно.
+        - Если features = None → вернёт None.
+        """
+        if features is None:
+            return None
+
+        if isinstance(features, torch.Tensor):
+            if average and features.ndim == 3:
+                return features.mean(dim=1, keepdim=True)
+            return features
+
+        if isinstance(features, dict):
+            return {
+                key: self.aggregate_features(val, average)
+                for key, val in features.items()
+            }
+
+        raise TypeError(f"Unsupported feature type: {type(features)}")
+
     def prepare_data(self):
 
         for name in tqdm(self.video_names, desc="Extracting multimodal features"):
@@ -135,26 +169,28 @@ class MultimodalDataset(Dataset):
                     scene_tensor = scene_tensor,
                 )
 
-                entry["features"]["body"] = extracted.get("body")
-                entry["features"]["face"] = extracted.get("face")
-                entry["features"]["scene"] = extracted.get("scene")
+                entry["features"]["body"] = self.aggregate_features(extracted.get("body"), self.average_features)
+                entry["features"]["face"] = self.aggregate_features(extracted.get("face"), self.average_features)
+                entry["features"]["scene"] = self.aggregate_features(extracted.get("scene"), self.average_features)
 
             except Exception as e:
-                print(f"⚠️ Ошибка при извлечении фичей для {name}: {e}")
+                print(f"⚠️ Ошибка при извлечении видео для {name}: {e}")
                 entry["features"]["body"] = None
                 entry["features"]["face"] = None
                 entry["features"]["scene"] = None
 
             try:
                 audio_feats = self.extractors["audio"].extract(audio_path=audio_path)
-                entry["features"]["audio"] = audio_feats
+                entry["features"]["audio"] = self.aggregate_features(audio_feats, self.average_features)
             except Exception as e:
                 print(f"⚠️ Ошибка при извлечении аудио для {name}: {e}")
                 entry["features"]["audio"] = None
 
             try:
-                text_feats = self.extractors["text"].extract(self.df[self.df["video_name"] == name]["text"].values[0])
-                entry["features"]["text"] = text_feats
+                text_feats = self.extractors["text"].extract(
+                    self.df[self.df["video_name"] == name]["text"].values[0]
+                )
+                entry["features"]["text"] = self.aggregate_features(text_feats, self.average_features)
             except Exception as e:
                 print(f"⚠️ Ошибка при извлечении текста для {name}: {e}")
                 entry["features"]["text"] = None

@@ -45,6 +45,7 @@ class ConfigLoader:
         self.num_workers = dataloader_cfg.get("num_workers", 0)
         self.shuffle = dataloader_cfg.get("shuffle", True)
         self.prepare_only = dataloader_cfg.get("prepare_only", False)
+        self.average_features = dataloader_cfg.get("average_features", False)
 
         # ---------------------------
         # Аудио
