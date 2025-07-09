@@ -21,7 +21,7 @@ audio_dir = "{base_dir}/audio/{split}/"
 num_workers = 0
 shuffle = true
 prepare_only = true
-average_features = true
+average_features = false
 # ---------------------------
 # Общие параметры тренировки
 # ---------------------------

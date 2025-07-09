@@ -121,7 +121,8 @@ class MultimodalDataset(Dataset):
 
         if isinstance(features, torch.Tensor):
             if average and features.ndim == 3:
-                return features.mean(dim=1, keepdim=True)
+                features = features.mean(dim=1)  # → [B, D]
+            features = features.squeeze()
             return features
 
         if isinstance(features, dict):
