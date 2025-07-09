@@ -74,8 +74,8 @@ class PretrainedAudioEmbeddingExtractor:
         )
 
         return {
-            "emotion_logits":     out["emotion_logits"],
-            "personality_scores": out["personality_scores"],
-            "last_emo_encoder_features": out["last_emo_encoder_features"],
-            "last_per_encoder_features": out["last_per_encoder_features"],
+            "emotion_logits":     out["emotion_logits"].cpu(),
+            "personality_scores": out["personality_scores"].cpu(),
+            "last_emo_encoder_features": out["last_emo_encoder_features"].cpu(),
+            "last_per_encoder_features": out["last_per_encoder_features"].cpu(),
         }
