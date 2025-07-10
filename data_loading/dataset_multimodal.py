@@ -1,14 +1,14 @@
 # coding: utf-8
-import os
-import pickle
-import pandas as pd
-from tqdm import tqdm
+import os, pickle, logging
+from typing import Dict, Any, List
+
 import torch
 from torch.utils.data import Dataset
-import logging
+import pandas as pd
+from tqdm import tqdm
 
 # извлекает кадровые ROI + превращает их в тензоры
-from modalities.video.extractor import get_metadata
+from modalities.video.video_preprocessor import get_metadata
 
 
 class MultimodalDataset(Dataset):
@@ -19,14 +19,14 @@ class MultimodalDataset(Dataset):
 
     def __init__(
         self,
-        csv_path,
-        video_dir,
-        audio_dir,
+        csv_path: str,
+        video_dir: str,
+        audio_dir: str,
         config,
-        split,
-        modality_processors,
-        modality_feature_extractors,
-        dataset_name,
+        split: str,
+        modality_processors: dict,
+        modality_feature_extractors: dict,
+        dataset_name: str,
         device: str = "cuda",
     ):
         super().__init__()
@@ -56,15 +56,21 @@ class MultimodalDataset(Dataset):
             f"_average_features_{self.average_features}_feature_norm_{config.emb_normalize}.pickle"
         )
 
-        self.meta: list[dict] = []
 
         # ───── установка лейблов ─────
         if self.dataset_name == 'cmu_mosei':
-            self.label_columns = ["Neutral", "Anger", "Disgust", "Fear", "Happiness", "Sadness", "Surprise"]
+            self.label_columns = [
+                "Neutral", "Anger", "Disgust", "Fear",
+                "Happiness", "Sadness", "Surprise"
+                ]
+            self.label_key = "emotion"
         elif self.dataset_name == 'fiv2':
-            self.label_columns = ["openness", "conscientiousness", "extraversion", "agreeableness", "non-neuroticism"]
+            self.label_columns = [
+                "openness", "conscientiousness", "extraversion", "agreeableness", "non-neuroticism"
+                ]
+            self.label_key = "personality"
         else:
-            raise ValueError(f"Неизвестное имя датасета: {self.dataset_name}")
+            raise ValueError(f"Неизвестное датасет: {self.dataset_name}")
 
         # ───────── читаем CSV ─────────
         self.df = pd.read_csv(self.csv_path).dropna()
@@ -74,71 +80,52 @@ class MultimodalDataset(Dataset):
             logging.info(f"[DatasetMultiModal] Используем только первые {len(self.df)} записей (subset_size={self.subset_size}).")
 
         self.video_names = sorted(self.df["video_name"].unique())
+        self.meta: list[dict] = []
 
         # ───────── либо грузим из pickle, либо готовим заново ─────────
         if self.save_prepared_data:
             os.makedirs(self.save_feature_path, exist_ok=True)
             self.pickle_path = os.path.join(self.save_feature_path, self.feature_filename)
-            self.load_data(self.pickle_path)
+            self._load_pickle(self.pickle_path)
 
-            if not self.meta:            # pickle пуст — готовим заново
-                self.prepare_data()
-                self.save_data(self.pickle_path)
+            if not self.meta:
+                self._prepare_data()
+                self._save_pickle(self.pickle_path)
         else:
-            self.prepare_data()
+            self._prepare_data()
 
-    # ──────────────────────────────────────────────────────────────────
-    # служебка
-    def find_file_recursive(self, base_dir: str, base_filename: str):
+    # ────────────────────────── utils ──────────────────────────── #
+    def _find_file(self, base_dir: str, base_filename: str):
         for root, _, files in os.walk(base_dir):
             for file in files:
                 if os.path.splitext(file)[0] == base_filename:
                     return os.path.join(root, file)
         return None
 
+    def _save_pickle(self, filename):
+        with open(filename, "wb") as f:
+            pickle.dump(self.meta, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    def _load_pickle(self, filename):
+        if os.path.exists(filename):
+            with open(filename, "rb") as f:
+                self.meta = pickle.load(f)
+        else:
+            self.meta = []
+
+    def _make_label_dict(self, tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Упаковываем метку в словарь так, как ждёт Supra pipeline."""
+        return {self.label_key: tensor}
+
     # ──────────────────────────────────────────────────────────────────
     # извлечение фичей
 
-    def aggregate_features(self, features, average: bool):
-
-        """
-        Унифицированная агрегация фичей.
-
-        Args:
-            features (Union[Tensor, dict, None]): Входные фичи.
-            average (bool): Если True — усредняет по времени (dim=1), если применимо.
-
-        Returns:
-            Aggregated features или None.
-
-        - Если features = Tensor с shape [B, T, D] и average=True → усредняет по T.
-        - Если average=False → возвращает как есть.
-        - Если features — dict → обходит рекурсивно.
-        - Если features = None → вернёт None.
-        """
-        if features is None:
-            return None
-
-        if isinstance(features, torch.Tensor):
-            if average and features.ndim == 3:
-                features = features.mean(dim=1)  # → [B, D]
-            features = features.squeeze()
-            return features
-
-        if isinstance(features, dict):
-            return {
-                key: self.aggregate_features(val, average)
-                for key, val in features.items()
-            }
-
-        raise TypeError(f"Unsupported feature type: {type(features)}")
-
-    def prepare_data(self):
+    def _prepare_data(self):
 
         for name in tqdm(self.video_names, desc="Extracting multimodal features"):
 
-            video_path = self.find_file_recursive(self.video_dir, name)
-            audio_path = self.find_file_recursive(self.audio_dir, name)
+            video_path = self._find_file(self.video_dir, name)
+            audio_path = self._find_file(self.audio_dir, name)
 
             if video_path is None:
                 print(f"❌ Видео не найдено: {name}")
@@ -154,9 +141,10 @@ class MultimodalDataset(Dataset):
                 "features": {},
             }
 
+            # ---------- визуальные модальности -------------------- #
             try:
                 # --- детекция и препроцессинг кадров -----------------------
-                _, body_tensor, face_tensor, scene_tensor = get_metadata(
+                __, body, face, scene = get_metadata(
                     video_path      = video_path,
                     segment_length  = self.segment_length,
                     image_processor = self.modality_processors.get("body"),
@@ -165,66 +153,88 @@ class MultimodalDataset(Dataset):
 
                 # --- извлечение признаков через предобученные модели ------
                 extracted = self.extractors["body"].extract(
-                    body_tensor = body_tensor,
-                    face_tensor = face_tensor,
-                    scene_tensor = scene_tensor,
+                    body_tensor = body,
+                    face_tensor = face,
+                    scene_tensor = scene,
                 )
 
-                entry["features"]["body"] = self.aggregate_features(extracted.get("body"), self.average_features)
-                entry["features"]["face"] = self.aggregate_features(extracted.get("face"), self.average_features)
-                entry["features"]["scene"] = self.aggregate_features(extracted.get("scene"), self.average_features)
-
+                for m in ("body", "face", "scene"):
+                    entry["features"][m] = (
+                        self._aggregate(extracted.get(m), self.average_features)
+                        )
             except Exception as e:
-                print(f"⚠️ Ошибка при извлечении видео для {name}: {e}")
-                entry["features"]["body"] = None
-                entry["features"]["face"] = None
-                entry["features"]["scene"] = None
+                logging.warning(f"Video extract error {name}: {e}")
 
+            # ---------- audio / text ------------------------------ #
             try:
                 audio_feats = self.extractors["audio"].extract(audio_path=audio_path)
-                entry["features"]["audio"] = self.aggregate_features(audio_feats, self.average_features)
+                entry["features"]["audio"] = self._aggregate(audio_feats, self.average_features)
             except Exception as e:
-                print(f"⚠️ Ошибка при извлечении аудио для {name}: {e}")
+                logging.warning(f"Audio extract error {name}: {e}")
                 entry["features"]["audio"] = None
 
             try:
-                text_feats = self.extractors["text"].extract(
-                    self.df[self.df["video_name"] == name]["text"].values[0]
-                )
-                entry["features"]["text"] = self.aggregate_features(text_feats, self.average_features)
+                txt_raw = self.df[self.df["video_name"] == name]["text"].values[0]
+                text_feats = self.extractors["text"].extract(txt_raw)
+                entry["features"]["text"] = self._aggregate(text_feats, self.average_features)
             except Exception as e:
-                print(f"⚠️ Ошибка при извлечении текста для {name}: {e}")
+                logging.warning(f"Text extract error {name}: {e}")
                 entry["features"]["text"] = None
 
+            # ---------- label ------------------------------------- #
             try:
-                entry["label"] = torch.tensor(
+                lbl_tensor = torch.tensor(
                     self.df[self.df["video_name"] == name][self.label_columns].values[0],
                     dtype=torch.float32
                 )
+                entry["labels"] = self._make_label_dict(lbl_tensor)
             except Exception as e:
-                print(f"⚠️ Ошибка при извлечении лейблов для {name}: {e}")
-                entry["label"] = torch.tensor([])
+                logging.warning(f"Label extract error {name}: {e}")
+                entry["labels"] = self._make_label_dict(torch.tensor([]))
 
             self.meta.append(entry)
             torch.cuda.empty_cache()
 
-    # ──────────────────────────────────────────────────────────────────
-    # работа с pickle
-    def save_data(self, filename):
-        with open(filename, "wb") as f:
-            pickle.dump(self.meta, f, protocol=pickle.HIGHEST_PROTOCOL)
+    def _aggregate(self, feats, average: bool = None):
 
-    def load_data(self, filename):
-        if os.path.exists(filename):
-            with open(filename, "rb") as f:
-                self.meta = pickle.load(f)
-        else:
-            self.meta = []
+        """
+        Унифицированная агрегация фичей.
 
-    # ──────────────────────────────────────────────────────────────────
-    # стандартные методы Dataset
-    def __len__(self):
-        return len(self.meta)
+        Args:
+            feats (Union[Tensor, dict, None]): Входные фичи.
+            average (bool): Если True — усредняет по времени (dim=1), если применимо.
+
+        Returns:
+            Aggregated feats или None.
+
+        - Если feats = Tensor с shape [B, T, D] и average=True → усредняет по T.
+        - Если average=False → возвращает как есть.
+        - Если feats — dict → обходит рекурсивно.
+        - Если feats = None → вернёт None.
+        """
+
+        if average is None:
+            average = self.average_features
+
+        if feats is None:
+            return None
+
+        if isinstance(feats, torch.Tensor):
+            if average and feats.ndim == 3:
+                feats = feats.mean(dim=1)  # → [B, D]
+            return feats.squeeze()
+
+        if isinstance(feats, dict):
+            return {
+                key: self._aggregate(val, average)
+                for key, val in feats.items()
+            }
+
+        raise TypeError(f"Unsupported feature type: {type(feats)}")
+
+
+    # ───────────────────── dataset API ─────────────────────────── #
+    def __len__(self):  return len(self.meta)
 
     def __getitem__(self, idx):
         return self.meta[idx]

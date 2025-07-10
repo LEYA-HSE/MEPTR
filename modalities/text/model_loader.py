@@ -1,5 +1,5 @@
 import torch
-from .modules import (
+from .architectures import (
     EmotionMamba,
     PersonalityTransformer,
     FusionTransformer,

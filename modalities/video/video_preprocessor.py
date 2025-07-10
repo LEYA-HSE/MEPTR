@@ -2,13 +2,9 @@
 import cv2
 import os
 import torch
+import numpy as np
 from ultralytics import YOLO
 import mediapipe as mp
-
-from modalities.video.utils import (
-    select_uniform_frames,
-    image_processing,
-)
 
 mp_face_detection = mp.solutions.face_detection
 face_detector = mp_face_detection.FaceDetection(
@@ -16,6 +12,17 @@ face_detector = mp_face_detection.FaceDetection(
 )
 
 body_detector = YOLO("modalities/video/checkpoints/body/best_YOLO.pt")
+
+def select_uniform_frames(frames, N):
+    if len(frames) <= N:
+        return frames
+    else:
+        indices = np.linspace(0, len(frames) - 1, num=N, dtype=int)
+        return [frames[i] for i in indices]
+
+def image_processing(image, image_processor):
+    image = image_processor(images=image, return_tensors="pt").to("cuda")
+    return image['pixel_values']
 
 def get_metadata(
     video_path: str,
@@ -37,12 +44,6 @@ def get_metadata(
     cap = cv2.VideoCapture(video_path)
     video_name = os.path.basename(video_path)
 
-    # w, h, *_ = (int(cap.get(x)) for x in (
-    #     cv2.CAP_PROP_FRAME_WIDTH,
-    #     cv2.CAP_PROP_FRAME_HEIGHT,
-    #     cv2.CAP_PROP_FPS,
-    #     cv2.CAP_PROP_FRAME_COUNT)
-    # )
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     need_frames  = select_uniform_frames(list(range(total_frames)), segment_length)
 

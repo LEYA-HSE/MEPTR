@@ -2,7 +2,7 @@
 import torch
 import toml
 from pathlib import Path
-from models.models import EmotionMamba, PersonalityMamba, FusionTransformer, EmotionTransformer
+from .architectures import EmotionMamba, PersonalityMamba, FusionTransformer, EmotionTransformer
 
 MODALITY_META = {
     "body": {

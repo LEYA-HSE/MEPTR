@@ -16,14 +16,3 @@ def preprocess_body(body_roi: np.ndarray) -> np.ndarray:
     body_roi = cv2.resize(body_roi, (224, 224))
     body_roi = body_roi.astype('float32') / 255.0
     return body_roi
-
-def select_uniform_frames(frames, N):
-    if len(frames) <= N:
-        return frames
-    else:
-        indices = np.linspace(0, len(frames) - 1, num=N, dtype=int)
-        return [frames[i] for i in indices]
-
-def image_processing(image, image_processor):
-    image = image_processor(images=image, return_tensors="pt").to("cuda")
-    return image['pixel_values']

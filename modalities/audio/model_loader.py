@@ -1,7 +1,7 @@
 # modalities/audio/model_loader.py
 
 import torch
-from .modules import (
+from .architectures import (
     CustomMambaClassifier,
     CustomMambaRegressor,
     FusionTransformer,

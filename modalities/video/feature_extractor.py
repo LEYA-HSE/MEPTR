@@ -1,6 +1,6 @@
 import torch
 from transformers import CLIPProcessor,CLIPModel
-from modalities.video.model_loader import get_fusion_model
+from .model_loader import get_fusion_model
 
 class PretrainedImageEmbeddingExtractor:
     """

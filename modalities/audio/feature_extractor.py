@@ -3,7 +3,7 @@ import librosa
 import numpy as np
 from transformers import Wav2Vec2Processor
 
-from .modules import EmotionModel
+from .architectures import EmotionModel
 from .model_loader import load_fusion_model
 
 class PretrainedAudioEmbeddingExtractor:
