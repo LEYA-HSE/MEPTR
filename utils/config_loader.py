@@ -89,6 +89,7 @@ class ConfigLoader:
         self.lambda_emotion = train_general.get("lambda_emotion", 1)
         self.lambda_personality = train_general.get("lambda_personality", 5)
         self.lambda_domain = train_general.get("lambda_domain", 0.1)
+        self.checkpoint_dir = train_general.get("checkpoint_dir","checkpoints")
 
         # ---------------------------
         # Тренировка: параметры модели
@@ -104,6 +105,10 @@ class ConfigLoader:
         self.pers_loss_type = train_model.get("pers_loss_type", True)
         self.flag_emo_weight = train_model.get("flag_emo_weight", "ccc")
         self.hidden_dim = train_model.get("hidden_dim", 256)
+        self.beta1 = train_model.get("beta1", 0.05)
+        self.beta2 = train_model.get("beta2", 0.1)
+        self.lambda_w = train_model.get("lambda_w", 0.5)
+        self.top_k = train_model.get("top_k", 0.2)
         self.hidden_dim_gated = train_model.get("hidden_dim_gated", 256)
         self.num_transformer_heads = train_model.get("num_transformer_heads", 8)
         self.num_graph_heads = train_model.get("num_graph_heads", 8)

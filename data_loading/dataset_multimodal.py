@@ -59,18 +59,21 @@ class MultimodalDataset(Dataset):
 
         # ───── установка лейблов ─────
         if self.dataset_name == 'cmu_mosei':
-            self.label_columns = [
+            self.emotion_columns = [
                 "Neutral", "Anger", "Disgust", "Fear",
                 "Happiness", "Sadness", "Surprise"
                 ]
-            self.label_key = "emotion"
+            self.personality_columns  = []
         elif self.dataset_name == 'fiv2':
-            self.label_columns = [
+            self.personality_columns = [
                 "openness", "conscientiousness", "extraversion", "agreeableness", "non-neuroticism"
                 ]
-            self.label_key = "personality"
+            self.emotion_columns = []
         else:
             raise ValueError(f"Неизвестное датасет: {self.dataset_name}")
+
+        self.num_emotion = 7
+        self.num_personality = 5
 
         # ───────── читаем CSV ─────────
         self.df = pd.read_csv(self.csv_path).dropna()
@@ -113,9 +116,18 @@ class MultimodalDataset(Dataset):
         else:
             self.meta = []
 
-    def _make_label_dict(self, tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Упаковываем метку в словарь так, как ждёт Supra pipeline."""
-        return {self.label_key: tensor}
+    def _make_label_dict(
+        self,
+        emotion:      torch.Tensor | None,
+        personality:  torch.Tensor | None,
+    ) -> Dict[str, torch.Tensor | None]:
+        """
+        Возвращает словарь c обоими ключами. Если меток нет – None.
+        """
+        return {
+            "emotion":     emotion,
+            "personality": personality
+        }
 
     # ──────────────────────────────────────────────────────────────────
     # извлечение фичей
@@ -183,14 +195,46 @@ class MultimodalDataset(Dataset):
 
             # ---------- label ------------------------------------- #
             try:
-                lbl_tensor = torch.tensor(
-                    self.df[self.df["video_name"] == name][self.label_columns].values[0],
-                    dtype=torch.float32
+                emotion_tensor     = None
+                personality_tensor = None
+
+                #   ─ emotion ─
+                if self.emotion_columns:
+                    emotion_tensor = torch.tensor(
+                        self.df.loc[
+                            self.df["video_name"] == name, self.emotion_columns
+                        ].values[0],
+                        dtype=torch.float32
+                    )
+                else:
+                    emotion_tensor = torch.full(
+                        (self.num_emotion,), torch.nan, dtype=torch.float32
+                    )
+
+                #   ─ personality ─
+                if self.personality_columns:
+                    personality_tensor = torch.tensor(
+                        self.df.loc[
+                            self.df["video_name"] == name, self.personality_columns
+                        ].values[0],
+                        dtype=torch.float32
+                    )
+                else:
+                    personality_tensor = torch.full(
+                        (self.num_personality,), torch.nan, dtype=torch.float32
+                    )
+
+                entry["labels"] = self._make_label_dict(
+                    emotion_tensor,
+                    personality_tensor
                 )
-                entry["labels"] = self._make_label_dict(lbl_tensor)
+
             except Exception as e:
                 logging.warning(f"Label extract error {name}: {e}")
-                entry["labels"] = self._make_label_dict(torch.tensor([]))
+                entry["labels"] = self._make_label_dict(
+                    torch.full((self.num_emotion,), torch.nan, dtype=torch.float32),
+                    torch.full((self.num_personality,), torch.nan, dtype=torch.float32),
+                )
 
             self.meta.append(entry)
             torch.cuda.empty_cache()

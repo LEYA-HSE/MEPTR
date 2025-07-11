@@ -1,71 +1,110 @@
+# coding: utf-8
+"""
+dataset_builder.py
+------------------
+*  Формирует MultimodalDataset для указанного split'а
+*  Создаёт DataLoader с кастомным collate_fn
+"""
+
+from __future__ import annotations
+from pathlib import Path
+from typing import Dict, List, Any
+
+import os
 import torch
-from torch.utils.data import DataLoader
-from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import DataLoader, ConcatDataset
 
 from data_loading.dataset_multimodal import MultimodalDataset
 
+CORE_KEYS = {
+    "body":  ["last_emo_encoder_features", "last_per_encoder_features"],
+    "face":  ["last_emo_encoder_features", "last_per_encoder_features"],
+    "scene": ["last_emo_encoder_features", "last_per_encoder_features"],
+    "audio": ["last_emo_encoder_features", "last_per_encoder_features"],
+    "text":  ["last_emo_encoder_features", "last_per_encoder_features"],
+}
 
-def pad_to(x, target_size):
-    n_repeat = target_size - x.size(0)
-    if n_repeat <= 0:
-        return x
-    pad = x[-1:].repeat(n_repeat, *[1 for _ in x.shape[1:]])
-    return torch.cat([x, pad], dim=0)
+# ────────────────────────────────────────────────────────────────────────
+#                             COLLATE FN
+# ────────────────────────────────────────────────────────────────────────
+def _stack_core_feats(feat_dict: dict, modal: str) -> torch.Tensor:
+    """Конкатенируем только нужные ключи в единый вектор."""
+    parts = [feat_dict[k] for k in CORE_KEYS[modal] if k in feat_dict]
+    return torch.cat(parts)             # [D_total]
+
 
 def custom_collate_fn(batch):
-    """Собирает список образцов в единый батч, отбрасывая None (невалидные)."""
-    batch = [x for x in batch if x is not None]
+    # убираем None-образцы
+    batch = [b for b in batch if b is not None]
     if not batch:
         return None
 
-    video_path = [b["video_path"] for b in batch]
+    # --------- собираем features ---------
+    features = {}          # modality → Tensor([B, D])
+    metas    = {}          # modality → dict списков «побочных» полей (логиты)
 
-    labels = [b["label"] for b in batch]
-    label_tensor = torch.stack(labels)
+    # предполагаем, что все образцы имеют одинаковый набор модальностей
+    modalities = batch[0]["features"].keys()
 
-    videos = [b["video"] for b in batch] # new
-    video_tensor = pad_sequence(videos, batch_first=True) # new
+    for m in modalities:
+        core_vecs = []
+        aux_logits = []
+        for sample in batch:
+            core_vecs.append(_stack_core_feats(sample["features"][m], m))
+            aux_logits.append(sample["features"][m]["emotion_logits"])   # ← если нужно
+
+        features[m] = torch.stack(core_vecs)          # [B, D]
+        metas[m]    = {"emotion_logits": torch.stack(aux_logits)}
+
+    # --------- labels ---------
+    emo    = [b["labels"]["emotion"]     for b in batch]
+    person = [b["labels"]["personality"] for b in batch]
+    emo    = torch.stack(emo)
+    person = torch.stack(person)
 
     return {
-        "video_path": video_path,
-        "video": video_tensor, # new
-        "label": label_tensor,
+        "features": features,           # для обучения
+        "labels":   {
+            "emotion":     emo,
+            "personality": person,
+        },
+        "meta": metas,                  # можно не использовать в train-цикле
     }
 
-
+# ────────────────────────────────────────────────────────────────────────
+#               Функция создания датасета + DataLoader
+# ────────────────────────────────────────────────────────────────────────
 def make_dataset_and_loader(
     config,
     split: str,
-    modality_processors: dict,
-    modality_extractors: dict,
-    only_dataset: str = None,
+    modality_processors: Dict[str, Any],
+    modality_extractors: Dict[str, Any],
+    *,
+    only_dataset: str | None = None,
 ):
     """
-    Собирает MultimodalDataset и возвращает DataLoader.
-    modality_processors — dict с CLIPProcessor-ами и т.п.
-    modality_extractors  — dict с предобученными моделями.
+    Собирает (возможное объединение) MultimodalDataset'ов и возвращает DataLoader.
+    * config.datasets — словарь с описанием каждого датасета (см. config.toml)
+    * split — 'train' / 'dev' / 'test'
+    * only_dataset — если указан, обрабатывается только он
     """
-    datasets = []
-
     if not getattr(config, "datasets", None):
         raise ValueError("⛔ В конфиге не указана секция [datasets].")
 
-    for dataset_name, dataset_cfg in config.datasets.items():
+    datasets: List[MultimodalDataset] = []
+
+    for dataset_name, ds_cfg in config.datasets.items():
         if only_dataset and dataset_name != only_dataset:
             continue
 
-        csv_path = dataset_cfg["csv_path"].format(
-            base_dir=dataset_cfg["base_dir"],
-            split=split,
+        csv_path = ds_cfg["csv_path"].format(
+            base_dir=ds_cfg["base_dir"], split=split
         )
-        video_dir = dataset_cfg["video_dir"].format(
-            base_dir=dataset_cfg["base_dir"],
-            split=split,
+        video_dir = ds_cfg["video_dir"].format(
+            base_dir=ds_cfg["base_dir"], split=split
         )
-
-        audio_dir = dataset_cfg["audio_dir"].format(
-            base_dir=dataset_cfg["base_dir"],
-            split=split,
+        audio_dir = ds_cfg["audio_dir"].format(
+            base_dir=ds_cfg["base_dir"], split=split
         )
 
         dataset = MultimodalDataset(
@@ -84,7 +123,7 @@ def make_dataset_and_loader(
     if not datasets:
         raise ValueError(f"⚠️ Для split='{split}' не найдено ни одного датасета.")
 
-    full_dataset = datasets[0] if len(datasets) == 1 else torch.utils.data.ConcatDataset(datasets)
+    full_dataset = datasets[0] if len(datasets) == 1 else ConcatDataset(datasets)
 
     loader = DataLoader(
         full_dataset,

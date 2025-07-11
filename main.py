@@ -27,6 +27,9 @@ def main():
     results_dir = f"results/results_{model_name}_{timestamp}"
     os.makedirs(results_dir, exist_ok=True)
 
+    base_config.checkpoint_dir = os.path.join(results_dir, "checkpoints")
+    os.makedirs(base_config.checkpoint_dir, exist_ok=True)
+
     epochlog_dir = os.path.join(results_dir, "metrics_by_epoch")
     os.makedirs(epochlog_dir, exist_ok=True)
 

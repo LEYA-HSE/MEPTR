@@ -20,8 +20,8 @@ audio_dir = "{base_dir}/audio/{split}/"
 [dataloader]
 num_workers = 0
 shuffle = true
-prepare_only = true
-average_features = false
+prepare_only = false
+average_features = true
 
 # ---------------------------
 # Общие параметры тренировки
@@ -31,12 +31,13 @@ random_seed = 42                  # фиксируем random seed для вос
 subset_size = 2                   # ограничение на количество примеров (0 = использовать весь датасет)
 batch_size = 16                   # размер батча
 num_epochs = 2                  # число эпох тренировки
-max_patience = 25                 # максимальное число эпох без улучшений (для Early Stopping)
+max_patience = 10                 # максимальное число эпох без улучшений (для Early Stopping)
 save_best_model = true            # сохранять лучшую модель
 save_prepared_data = true         # сохранять извлеченные признаки (эмбеддинги)
 save_feature_path = './features/' # путь для сохранения эмбеддингов
 search_type = "exhaustive"        # стратегия поиска: "greedy", "exhaustive" или "none"
 opt_set = 'dev'                   # набор для оптимизации параметров обучения
+checkpoint_dir = "checkpoints"
 
 # ---------------------------
 # Параметры модели
@@ -49,7 +50,11 @@ weight_emotion        = 0.1      # для корректировки лосса 
 weight_pers           = 1        # для корректировки лосса персональных качеств
 pers_loss_type        = 'mae'    # ccc, mae, mse, rmse_bell, rmse_logcosh, RMGL
 flag_emo_weight       = true     # используем веса для дисбаланса эмоциональных классов
-hidden_dim            = 512      # размер скрытого состояния
+hidden_dim            = 256      # размер скрытого состояния
+beta1         = 0.05      # orthogonality loss weight
+beta2         = 0.1       # contrastive loss weight
+lambda_w      = 0.5       # similarity loss weight
+top_k         = 0.2       # 20 % лучших концептов
 num_transformer_heads = 8        # количество attention голов в трансформере
 tr_layer_number       = 5        # количество слоев в трансформере
 mamba_d_state         = 16       # размер состояния в Mamba
