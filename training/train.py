@@ -23,11 +23,12 @@ import os
 import random
 from pathlib import Path
 from typing import Dict, List
-
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from utils.measures import mf1, uar, acc_func, ccc
 from models.supra_models import SupraMultitaskModel
 from .supra_train_utils import (
     alignment_train_step,
@@ -62,16 +63,89 @@ def move_labels_to_device(lbls: Dict[str, torch.Tensor | None],
     return {k: (v.to(device) if v is not None else None)
             for k, v in lbls.items()}
 
+def transform_matrix(matrix):
+    threshold1 = 1 - 1/7
+    threshold2 = 1/7
+    mask1 = matrix[:, 0] >= threshold1
+    result = np.zeros_like(matrix[:, 1:])
+    transformed = (matrix[:, 1:] >= threshold2).astype(int)
+    result[~mask1] = transformed[~mask1]
+    return result
+
+def process_predictions(pred_emo, true_emo):
+    pred_emo = torch.nn.functional.softmax(pred_emo, dim=1).cpu().detach().numpy()
+    pred_emo = transform_matrix(pred_emo).tolist()
+    true_emo = true_emo.cpu().detach().numpy()
+    true_emo = np.where(true_emo > 0, 1, 0)[:, 1:].tolist()
+    return pred_emo, true_emo
+
+
+# ─────────────────────────── evaluation ────────────────────────────
+@torch.no_grad()
+def evaluate_epoch(model: torch.nn.Module,
+                   loader: DataLoader,
+                   device   : torch.device) -> Dict[str, float]:
+    """
+    Прогоняет loader, собирает метрики.
+    Возврат: dict {metric: value}
+    """
+    model.eval()
+
+    emo_preds, emo_tgts = [], []
+    pkl_preds, pkl_tgts = [], []
+
+    for batch in loader:
+        feats = {m: (v.to(device) if v is not None else None)
+                 for m, v in batch["features"].items()}
+        out   = model(feats, modality=list(feats.keys())[0])
+
+        # raw logits → process_predictions → бинарные вектора без NaN
+        logits_e = out["emotion_logits"]          # [B,7]  (на GPU)
+        y_e      = batch["labels"]["emotion"]     # [B,7]  (на CPU/Nan)
+
+        valid_e = ~torch.isnan(y_e).all(dim=1)
+        if valid_e.any():
+            y_pred_proc, y_true_proc = process_predictions(
+                logits_e[valid_e],          # raw logits
+                y_e     [valid_e]           # ground-truth one-hot (NaN-free)
+            )
+            emo_preds.extend(y_pred_proc)
+            emo_tgts .extend(y_true_proc)
+
+        # personality  (как раньше)
+        preds_p = out["personality_scores"].cpu()
+        y_p     = batch["labels"]["personality"]
+        valid_p = ~torch.isnan(y_p).all(dim=1)
+        if valid_p.any():
+            pkl_preds.append(preds_p[valid_p].numpy())
+            pkl_tgts .append(y_p   [valid_p].numpy())
+
+    # --- агрегация ---
+    metrics = {}
+    if emo_tgts:
+        tgt = np.asarray(emo_tgts); prd = np.asarray(emo_preds)
+        metrics["mF1"]  = mf1(tgt, prd)
+        metrics["mUAR"] = uar(tgt, prd)
+    if pkl_tgts:
+        tgt = np.vstack(pkl_tgts); prd = np.vstack(pkl_preds)
+        metrics["ACC"] = acc_func(tgt, prd)
+        metrics["CCC"] = ccc(tgt, prd)
+
+    return metrics
+
 
 # ────────────────────────── основной train() ──────────────────────────
-def train(cfg, mm_loader: DataLoader):
+def train(cfg,
+          mm_loader:   DataLoader,
+          dev_loaders:  dict[str, DataLoader] | None = None,
+          test_loaders: dict[str, DataLoader] | None = None):
     """
-    Args
-    ----
-    cfg        – объект-конфиг (attrs: device, random_seed, epochs,
-                 hidden_dim, lr, beta1, beta2, lambda_w, top_k,
-                 checkpoint_dir)
-    mm_loader  – единый DataLoader, отдающий multimodal-батчи
+    cfg          – объект-конфиг (поля: device, random_seed, num_epochs,
+                    hidden_dim, lr, beta1, beta2, lambda_w, top_k,
+                    checkpoint_dir)
+    mm_loader    – train-DataLoader (multimodal)
+    dev_loader   – optional, для валидации
+    test_loader  – optional, для оценки в конце
     """
 
     seed_everything(cfg.random_seed)
@@ -85,9 +159,10 @@ def train(cfg, mm_loader: DataLoader):
                 input_dims[mod] = feat.shape[1]
         if input_dims:
             break
-    modalities: List[str] = list(input_dims.keys())
-    if not modalities:
+    if not input_dims:
         raise RuntimeError("Ни в одном примере не найдено ни одной модальности")
+
+    modalities: List[str] = list(input_dims.keys())
 
     # ── 1. Строим модель и оптимизатор ─────────────────────────────────
     model = SupraMultitaskModel(
@@ -102,9 +177,9 @@ def train(cfg, mm_loader: DataLoader):
     # ── 2. Сквозные эпохи (alignment → guidance → concept) ────────────
     for epoch in range(cfg.num_epochs):
         print(f"\n═══ Epoch {epoch + 1}/{cfg.num_epochs} ═══")
+        model.train()
 
         # ─ Alignment stage ────────────────────────────────────────────
-        model.train()
         for mod in modalities:
             total_loss, seen = 0.0, 0
             for batch in tqdm(mm_loader, desc=f"[Align] {mod}"):
@@ -155,8 +230,24 @@ def train(cfg, mm_loader: DataLoader):
             avg = total_loss / max(seen, 1)
             print(f"    {mod}: concept_loss = {avg:.4f}")
 
+            # ----- Validation -----------------------------------------
+            if dev_loaders is not None:
+                print("\n—— Dev metrics ——")
+                for ds_name, dev_loader in dev_loaders.items():
+                    m = evaluate_epoch(model, dev_loader, device)
+                    msg = " · ".join(f"{k}:{v:.4f}" for k, v in m.items())
+                    print(f"  🔎 Dev[{ds_name}] | {msg}")
+
     # ── 3. Сохраняем итоговый чекпойнт ────────────────────────────────
     os.makedirs(cfg.checkpoint_dir, exist_ok=True)
     ckpt_path = Path(cfg.checkpoint_dir) / "supra_multitask_final.pt"
     torch.save(model.state_dict(), ckpt_path)
     print(f"\n✔ Model saved to {ckpt_path.resolve()}")
+
+    # ─ 4. Финальный тест ------------------------------------------
+    if test_loaders is not None:
+        print("\n—— Test metrics ——")
+        for ds_name, test_loader in test_loaders.items():
+            m = evaluate_epoch(model, test_loader, device)
+            msg = " · ".join(f"{k}:{v:.4f}" for k, v in m.items())
+            print(f"  🏁 Test[{ds_name}] | {msg}")

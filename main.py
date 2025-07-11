@@ -136,7 +136,11 @@ def main():
 
     # ──────────────── запускаем supra-modal training ─────────────────────
 
-    supra_train(cfg=base_config, mm_loader=union_train_loader)
+    supra_train(cfg=base_config,
+                mm_loader     = union_train_loader,
+                dev_loaders   = dev_loaders,
+                test_loaders  = test_loaders
+            )
 
     # # ──────────────────── 6. Поиск гиперпараметров / одиночный run ──
     # search_config  = toml.load("search_params.toml")
