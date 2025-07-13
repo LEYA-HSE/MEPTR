@@ -175,29 +175,27 @@ def build_guidance_set(model: nn.Module,
         }
     """
     # ─── helper ──────────────────────────────────────────────────────
-    def _calc_k(n: int) -> int:
-        """Считаем целое k по правилу выше и заодно страхуемся от нулей."""
-        k = int(round(n * top_k)) if isinstance(top_k, float) and top_k < 1 \
-            else int(top_k)
-        return max(1, min(k, n))   # минимум 1, не больше n
+    def _k_from_ratio(n: int) -> int:
+        if isinstance(top_k, float) and top_k < 1:
+            k = int(round(n * top_k))
+        else:
+            k = int(top_k)
+        return max(1, min(k, n))
 
     model.eval()
     bank = {
-        "emotion": {c: [] for c in range(7)},
-        "personality": {}
+        "emotion":     {c: [] for c in range(7)},
+        "personality": {(t, b): [] for t in range(5) for b in (0, 1)},
     }
 
-    for mod, loader in loaders_by_mod.items():
-        # для PKL
-        pkl_feat = {(i, b): [] for i in range(5) for b in [0, 1]}
-        pkl_err  = {(i, b): [] for i in range(5) for b in [0, 1]}
 
+    for mod, loader in loaders_by_mod.items():
         for batch in tqdm(loader, desc=f"[guidance] {mod}"):
-            feats = {k: v.to(device) for k, v in batch["features"].items()}
+            feats = {m: x.to(device) for m, x in batch["features"].items()}
             y_e   = batch["labels"]["emotion"].to(device)
             y_p   = batch["labels"]["personality"].to(device)
 
-            out          = model(feats, mod)
+            out = model(feats, modality=mod)
             z_emo, z_aux = out["z_emo"], out["z_aux"]
             logits_e     = out["emotion_logits"]
             preds_p      = out["personality_scores"]
@@ -207,47 +205,42 @@ def build_guidance_set(model: nn.Module,
             for cls in range(7):
                 mask = (~torch.isnan(y_e[:, cls])) & (y_e[:, cls] > 0.5)
                 if mask.any():
-                    k = _calc_k(mask.sum().item())
-                    top_idx = probs[mask, cls].topk(k).indices
-                    bank["emotion"][cls].extend(z_emo[mask][top_idx].cpu())
+                    k = _k_from_ratio(mask.sum().item())
+                    top = probs[mask, cls].topk(k).indices
+                    bank["emotion"][cls].extend(z_emo[mask][top].cpu())
 
             # ---------- PERSONALITY ----------
-            mse = F.mse_loss(preds_p, y_p, reduction='none')    # [B,5]
+            mse = F.mse_loss(preds_p, y_p, reduction='none')          # [B,5]
             for t in range(5):
                 col_y, col_mse = y_p[:, t], mse[:, t]
                 valid = ~torch.isnan(col_y)
-                for b, mask in [(0, valid & (col_y < 0.5)),
-                                (1, valid & (col_y >= 0.5))]:
-                    if mask.any():
-                        pkl_feat[(t, b)].extend(z_aux[mask].cpu())
-                        pkl_err[(t, b)].extend(col_mse[mask].cpu())
+                for b, m in ((0, valid & (col_y < 0.5)),
+                             (1, valid & (col_y >= 0.5))):
+                    if m.any():
+                        k = _k_from_ratio(m.sum().item())
+                        top = col_mse[m].topk(k, largest=False).indices
+                        bank["personality"][(t, b)].extend(z_aux[m][top].cpu())
 
         # --- finalize PKL bank for current modality ---
-        bank["personality"][mod] = {}
-        for key, feats in pkl_feat.items():
-            if feats:
-                feats = torch.stack(feats)
-                errs  = torch.tensor(pkl_err[key])
-                k = _calc_k(errs.size(0))
-                top = errs.topk(k, largest=False).indices
-                bank["personality"][mod][key] = feats[top]
-            else:
-                bank["personality"][mod][key] = torch.empty(0, z_aux.size(1))
+        for cls in range(7):
+            vecs = bank["emotion"][cls]
+            bank["emotion"][cls] = torch.stack(vecs) if vecs else torch.empty(0, z_emo.size(1))
 
-    # tensor-ify emotion lists
-    bank["emotion"] = {
-        c: (torch.stack(lst) if lst else torch.empty(0, z_emo.size(1)))
-        for c, lst in bank["emotion"].items()
-    }
-    return bank
+        for key, vecs in bank["personality"].items():
+            bank["personality"][key] = torch.stack(vecs) if vecs else torch.empty(0, z_aux.size(1))
+
+        return bank
 
 
 # ═════════════════════ CONCEPT-GUIDED STEP ═══════════════════════════
-def concept_guided_train_step(model: nn.Module,
-                              optimizer: torch.optim.Optimizer,
-                              batch: dict,
-                              guidance_set: dict,
-                              lambda_: float = 0.5) -> float:
+def concept_guided_train_step(
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        batch: dict,
+        guidance_set: dict,
+        lambda_: float = 0.5,
+        gamma_task: float = 0.1
+    ) -> float:
     """
     Fine-tune унимодальной ветки + similarity к guidance-якорям.
     Shared-encoder перед вызовом должен быть **заморожен**.
@@ -273,33 +266,39 @@ def concept_guided_train_step(model: nn.Module,
     z_aux, z_emo = out["z_aux"], out["z_emo"]
     preds_p, logits_e = out["personality_scores"], out["emotion_logits"]
 
-    total_loss = 0.0
+    task_loss, sim_loss = 0.0, 0.0
     # ---------- Personality ----------
     if valid_p.any():
-        total_loss += F.mse_loss(preds_p[valid_p], y_p[valid_p])
+        task_loss += F.mse_loss(preds_p[valid_p], y_p[valid_p])     # ◄─ task
         for trait in range(5):
             pos_mask = y_p[valid_p][:, trait] >= 0.5
-            for b, mask in [(1, pos_mask), (0, ~pos_mask)]:
+            for b, mask in ((1, pos_mask), (0, ~pos_mask)):
                 if mask.sum():
-                    bank = guidance_set["personality"][modality].get((trait, b))
-                    if bank is not None and bank.numel():
-                        rand = torch.randint(0, bank.size(0), (mask.sum(),))
-                        total_loss += lambda_ * similarity_loss(
-                            z_aux[valid_p][mask], bank[rand].to(device))
+                    anchors = guidance_set["personality"][(trait, b)]
+                    if anchors.numel():
+                        k = min(8, mask.sum().item(), anchors.size(0))
+                        rand = torch.randint(0, anchors.size(0), (k,))
+                        sim_loss += similarity_loss(                 # ◄─ sim
+                            z_aux[valid_p][mask][:k], anchors[rand].to(device))
 
     # ---------- Emotion ----------
     if valid_e.any():
-        total_loss += F.binary_cross_entropy_with_logits(
+        task_loss += F.binary_cross_entropy_with_logits(            # ◄─ task
             logits_e[valid_e], y_e[valid_e])
         y_bin = (y_e[valid_e] > 0.5).int()
         for cls in range(7):
             idx = (y_bin[:, cls] == 1).nonzero(as_tuple=True)[0]
-            bank = guidance_set["emotion"][cls]
-            if idx.numel() and bank.numel():
-                rand = torch.randint(0, bank.size(0), (idx.size(0),))
-                total_loss += lambda_ * similarity_loss(
-                    z_emo[valid_e][idx], bank[rand].to(device))
+            if idx.numel():
+                anchors = guidance_set["emotion"][cls]
+                if anchors.numel():
+                    k = min(8, idx.numel(), anchors.size(0))
+                    rand = torch.randint(0, anchors.size(0), (k,))
+                    sim_loss += similarity_loss(                     # ◄─ sim
+                        z_emo[valid_e][idx][:k], anchors[rand].to(device))
 
+    # ----- финальный лосс c весами γ и λ -----
+    total_loss = gamma_task * task_loss + lambda_ * sim_loss
+    # --------------------------------------------------------------------
     total_loss.backward()
     optimizer.step()
     return float(total_loss)

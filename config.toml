@@ -30,7 +30,10 @@ average_features = true
 random_seed = 42                  # фиксируем random seed для воспроизводимости (0 = каждый раз разный)
 subset_size = 0                   # ограничение на количество примеров (0 = использовать весь датасет)
 batch_size = 32                   # размер батча
-num_epochs = 75                  # число эпох тренировки
+num_epochs = 75                   # число эпох тренировки
+align_epochs  = 10                # ← сколько эпох гоняем alignment-стяжку
+replay_epochs = 100               # ← сколько эпох «replay / concept-guided»
+gamma_task    = 0.1               # ← вес BCE+MSE в replay-фазе (γ из статьи)
 max_patience = 15                 # максимальное число эпох без улучшений (для Early Stopping)
 save_best_model = true            # сохранять лучшую модель
 save_prepared_data = true         # сохранять извлеченные признаки (эмбеддинги)

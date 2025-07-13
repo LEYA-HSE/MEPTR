@@ -133,6 +133,83 @@ def evaluate_epoch(model: torch.nn.Module,
 
     return metrics
 
+def _log_dev_and_stop(model, dev_loaders, test_loaders, device,
+                      cur_epoch, total_epochs,
+                      best_vals, patience,
+                      counter_ref, patience_counter_ref, cfg):
+    """
+    Один вьюх-метод, чтобы не дублировать длинный код в обоих фазах.
+    best_vals          – (best_emotion_avg, best_pkl_avg)
+    counter_ref        – [getter_best_emo, getter_best_pkl, setter_best_emo, setter_best_pkl]
+    patience_counter_ref – [getter_pc, setter_pc]
+    """
+    best_emo_get, best_pkl_get, best_emo_set, best_pkl_set = counter_ref
+    pc_get, pc_set = patience_counter_ref
+
+    dev_emo_avgs, dev_pkl_avgs = [], []
+    logging.info("\n—— Dev metrics ——")
+    for ds_name, dev_loader in dev_loaders.items():
+        m = evaluate_epoch(model, dev_loader, device)
+
+        # emotion
+        emo_avg = ((m["mF1"] + m["mUAR"]) / 2) if {"mF1", "mUAR"} <= m.keys() else None
+        if emo_avg is not None:
+            dev_emo_avgs.append(emo_avg)
+
+        # personality
+        pkl_avg = ((m["ACC"] + m["CCC"]) / 2) if {"ACC", "CCC"} <= m.keys() else None
+        if pkl_avg is not None:
+            dev_pkl_avgs.append(pkl_avg)
+
+        msg = " · ".join(f"{k}:{v:.4f}" for k, v in m.items())
+        logging.info(f"[Dev:{ds_name}] {msg}"
+                     + (f" · emo_avg:{emo_avg:.4f}" if emo_avg is not None else "")
+                     + (f" · pkl_avg:{pkl_avg:.4f}" if pkl_avg is not None else ""))
+
+    mean_emo = float(np.mean(dev_emo_avgs)) if dev_emo_avgs else None
+    mean_pkl = float(np.mean(dev_pkl_avgs)) if dev_pkl_avgs else None
+    logging.info("Mean Dev | "
+                 + (f"emo_avg={mean_emo:.4f} " if mean_emo is not None else "")
+                 + (f"pkl_avg={mean_pkl:.4f}" if mean_pkl is not None else ""))
+
+    improved_emo = True if mean_emo is None else mean_emo > best_emo_get()
+    improved_pkl = True if mean_pkl is None else mean_pkl > best_pkl_get()
+
+    if improved_emo or improved_pkl:
+        if mean_emo is not None:
+            best_emo_set(mean_emo)
+        if mean_pkl is not None:
+            best_pkl_set(mean_pkl)
+        pc_set(0)
+
+        os.makedirs(cfg.checkpoint_dir, exist_ok=True)
+        ckpt_path = Path(cfg.checkpoint_dir) / (
+            f"best_ep{cur_epoch+1}"
+            + (f"_emo{mean_emo:.4f}" if mean_emo is not None else "")
+            + (f"_pkl{mean_pkl:.4f}" if mean_pkl is not None else "")
+            + ".pt"
+        )
+        torch.save(model.state_dict(), ckpt_path)
+        logging.info(f"✔ Best model saved: {ckpt_path.name}")
+    else:
+        pc_set(pc_get() + 1)
+        reasons = []
+        if not improved_emo: reasons.append("emotion")
+        if not improved_pkl: reasons.append("pkl")
+        logging.warning(f"No improvement in {', '.join(reasons)} — "
+                        f"patience {pc_get()}/{patience}")
+        if pc_get() >= patience:
+            logging.info(f"Early stopping at epoch {cur_epoch + 1}/{total_epochs}")
+            return True  # stop training
+
+    # — Test —
+    if test_loaders:
+        logging.info("\n—— Test metrics ——")
+        for ds_name, test_loader in test_loaders.items():
+            m = evaluate_epoch(model, test_loader, device)
+            msg = " · ".join(f"{k}:{v:.4f}" for k, v in m.items())
+            logging.info(f"  🏁 Test[{ds_name}] | {msg}")
+    return False
 
 # ────────────────────────── основной train() ──────────────────────────
 def train(cfg,
@@ -179,142 +256,244 @@ def train(cfg,
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr,
                                    weight_decay=1e-5)
 
-    # ── 2. Сквозные эпохи (alignment → guidance → concept) ────────────
-    for epoch in range(cfg.num_epochs):
-        logging.info(f"═══ Epoch {epoch + 1}/{cfg.num_epochs} ═══")
+    # ───────────────── 2-A. ALIGNMENT-фаза ─────────────────────
+    for epoch in range(cfg.align_epochs):
+        logging.info(f"═══ ALIGNMENT {epoch + 1}/{cfg.align_epochs} ═══")
         model.train()
 
-        # ─ Alignment stage ────────────────────────────────────────────
-        total_loss, seen = 0.0, 0
-        for batch in tqdm(mm_loader, desc="[Align] mix"):
-            # batch уже содержит ВСЕ модальности из collate_fn
+        total_loss, steps = 0.0, 0
+        for batch in tqdm(mm_loader, desc="[Align]"):
             loss = alignment_train_step(
-                model,
-                optimizer,
-                batch,                               # передаём как есть
-                beta_ortho = cfg.beta_ortho,         # новые имена параметров
-                beta_contr = cfg.beta_contr,
-                margin     = cfg.triplet_margin
+                model, optimizer, batch,
+                beta_ortho=cfg.beta_ortho,
+                beta_contr=cfg.beta_contr,
+                margin=cfg.triplet_margin,
             )
-            total_loss += loss
-            seen += 1
-        avg = total_loss / max(seen, 1)
-        logging.info(f"[Align] mixed: loss={avg:.4f}")
+            total_loss += loss;  steps += 1
+        logging.info(f"[Align] mean-loss {total_loss / steps:.4f}")
 
-        # ─ Guidance set ───────────────────────────────────────────────
-        loaders_dict = {m: mm_loader for m in modalities}  # всех кормим одним
-        guidance = build_guidance_set(model, loaders_dict,
-                                      top_k=cfg.top_k, device=device)
-        logging.info("guidance_set built ✔")
+        # — Dev / Test (как раньше) —
+        if dev_loaders:
+            _log_dev_and_stop (
+                model,
+                dev_loaders,
+                test_loaders,
+                device,
+                epoch,
+                cfg.align_epochs + cfg.replay_epochs,
+                best_vals=(best_emotion_avg, best_pkl_avg),
+                patience=cfg.max_patience,
+                counter_ref=[
+                    lambda: best_emotion_avg,
+                    lambda: best_pkl_avg,
+                    lambda v: globals().update(best_emotion_avg=v),
+                    lambda v: globals().update(best_pkl_avg=v)
+                ],
+                patience_counter_ref=[
+                    lambda: patience_counter,
+                    lambda v: globals().update(patience_counter=v)
+                ],
+                cfg=cfg)
+    # ───────────────── 2-B. GUIDANCE-банк ──────────────────────
+    guidance = build_guidance_set(
+        model,
+        loaders_by_mod={m: mm_loader for m in modalities},
+        top_k=cfg.top_k,
+        device=device,
+    )
+    logging.info("Guidance bank collected ✅")
 
-        # ─ FREEZE SHARED ENCODER ──────────────────────────────────────
-        # Делаем это один раз – после Alignment-фазы, перед первой Concept-guided
-        if epoch == 0:
-            for param in model.shared_encoder.parameters():      # <-- имя слоя
-                param.requires_grad_(False)
-            logging.info("Shared encoder parameters are frozen ✔")
+    # Замораживаем shared-encoder
+    for p in model.shared_encoder.parameters():
+        p.requires_grad_(False)
+    logging.info("Shared encoder frozen ✅")
 
-        # ─ Concept-guided stage ───────────────────────────────────────
+    # ───────────────── 2-C. REPLAY / CONCEPT-guided ────────────
+    for epoch in range(cfg.replay_epochs):
+        logging.info(f"═══ REPLAY {epoch + 1}/{cfg.replay_epochs} ═══")
+        model.train()
+
         for mod in modalities:
-            total_loss, seen = 0.0, 0
+            tl, steps = 0.0, 0
             for batch in tqdm(mm_loader, desc=f"[Concept] {mod}"):
                 feat = first_non_none_feature(batch, mod)
                 if feat is None:
                     continue
-
                 mini = {
                     "features": {mod: feat.to(device)},
-                    "labels":   move_labels_to_device(batch["labels"], device),
+                    "labels": move_labels_to_device(batch["labels"], device),
                     "modality": mod,
                 }
                 loss = concept_guided_train_step(
                     model, optimizer, mini,
                     guidance_set=guidance,
                     lambda_=cfg.lambda_w,
+                    gamma_task=cfg.gamma_task
                 )
-                total_loss += loss
-                seen += 1
-            avg = total_loss / max(seen, 1)
-            logging.info(f"[Concept] {mod}: loss={avg:.4f}")
+                tl += loss; steps += 1
+            logging.info(f"[Concept] {mod}: mean-loss {tl / max(steps, 1):.4f}")
 
-        # ----- Validation -----------------------------------------
-        if dev_loaders is not None:
-            dev_emotion_avgs, dev_pkl_avgs = [], []
-            logging.info(f"\n—— Dev metrics ——")
-
-
-            for ds_name, dev_loader in dev_loaders.items():
-                m = evaluate_epoch(model, dev_loader, device)
-
-                # ----- EMOTION -----
-                if {"mF1", "mUAR"} <= m.keys():
-                    emo_avg = (m["mF1"] + m["mUAR"]) / 2
-                    dev_emotion_avgs.append(emo_avg)
-                else:
-                    emo_avg = None         # в этом датасете эмоций нет
-
-                # ----- PERSONALITY --
-                if {"ACC", "CCC"} <= m.keys():
-                    pkl_avg = (m["ACC"] + m["CCC"]) / 2
-                    dev_pkl_avgs.append(pkl_avg)
-                else:
-                    pkl_avg = None         # в этом датасете PKL нет
-
-                # лог
-                msg = " · ".join(f"{k}:{v:.4f}" for k, v in m.items())
-                logging.info(
-                    f"[Dev:{ds_name}] {msg}"
-                    + (f" · emo_avg:{emo_avg:.4f}" if emo_avg is not None else "")
-                    + (f" · pkl_avg:{pkl_avg:.4f}" if pkl_avg is not None else "")
-                )
-
-            # --- средние только по тем, что были ---
-            epoch_dev_emo = float(np.mean(dev_emotion_avgs)) if dev_emotion_avgs else None
-            epoch_dev_pkl = float(np.mean(dev_pkl_avgs))     if dev_pkl_avgs else None
-            logging.info(
-                "Mean Dev | "
-                + (f"emo_avg={epoch_dev_emo:.4f} " if epoch_dev_emo is not None else "")
-                + (f"pkl_avg={epoch_dev_pkl:.4f}"  if epoch_dev_pkl  is not None else "")
+        # — Dev / Test + early-stopping (тот же код) —
+        if dev_loaders:
+            stop = _log_dev_and_stop(
+                model, dev_loaders, test_loaders, device,
+                cfg.align_epochs + epoch,
+                cfg.align_epochs + cfg.replay_epochs,
+                best_vals=(best_emotion_avg, best_pkl_avg),
+                patience=cfg.max_patience,
+                counter_ref=[
+                    lambda: best_emotion_avg,
+                    lambda: best_pkl_avg,
+                    lambda v: globals().update(best_emotion_avg=v),
+                    lambda v: globals().update(best_pkl_avg=v)
+                    ],
+                patience_counter_ref=[
+                    lambda: patience_counter,
+                    lambda v: globals().update(patience_counter=v)
+                    ],
+                cfg=cfg
             )
 
-            # --- early-stopping логика ---
-            improved_emo = True if epoch_dev_emo is None else epoch_dev_emo > best_emotion_avg
-            improved_pkl = True if epoch_dev_pkl is None else epoch_dev_pkl > best_pkl_avg
+            if stop:
+                break
 
-            # Обнуляем общий счётчик, если улучшилась хотя бы одна ветка
-            if improved_emo or improved_pkl:
-                if epoch_dev_emo is not None: best_emotion_avg = epoch_dev_emo
-                if epoch_dev_pkl is not None: best_pkl_avg     = epoch_dev_pkl
-                patience_counter = 0
 
-                # сохраняем чекпойнт
-                os.makedirs(cfg.checkpoint_dir, exist_ok=True)
-                ckpt_path = Path(cfg.checkpoint_dir) / (
-                    f"best_ep{epoch+1}"
-                    + (f"_emo{epoch_dev_emo:.4f}" if epoch_dev_emo is not None else "")
-                    + (f"_pkl{epoch_dev_pkl:.4f}" if epoch_dev_pkl is not None else "")
-                    + ".pt"
-                )
-                torch.save(model.state_dict(), ckpt_path)
-                logging.info(f"✔ Best model saved: {ckpt_path.name}")
+    # ── 2. Сквозные эпохи (alignment → guidance → concept) ────────────
+    # for epoch in range(cfg.num_epochs):
+    #     logging.info(f"═══ Epoch {epoch + 1}/{cfg.num_epochs} ═══")
+    #     model.train()
 
-            else:
-                patience_counter += 1
-                reasons = []
-                if not improved_emo: reasons.append("emotion")
-                if not improved_pkl: reasons.append("pkl")
-                logging.warning(
-                    f"No improvement in {', '.join(reasons)} — "
-                    f"patience {patience_counter}/{cfg.max_patience}"
-                )
-                if patience_counter >= cfg.max_patience:
-                    logging.info(f"Early stopping at epoch {epoch + 1}/{cfg.num_epochs}")
-                    break
+    #     # ─ Alignment stage ────────────────────────────────────────────
+    #     total_loss, seen = 0.0, 0
+    #     for batch in tqdm(mm_loader, desc="[Align] mix"):
+    #         # batch уже содержит ВСЕ модальности из collate_fn
+    #         loss = alignment_train_step(
+    #             model,
+    #             optimizer,
+    #             batch,                               # передаём как есть
+    #             beta_ortho = cfg.beta_ortho,         # новые имена параметров
+    #             beta_contr = cfg.beta_contr,
+    #             margin     = cfg.triplet_margin
+    #         )
+    #         total_loss += loss
+    #         seen += 1
+    #     avg = total_loss / max(seen, 1)
+    #     logging.info(f"[Align] mixed: loss={avg:.4f}")
 
-        # ─── Test after each epoch ─────────────────────────────────────
-        if test_loaders is not None:
-            logging.info("\n—— Test metrics ——")
-            for ds_name, test_loader in test_loaders.items():
-                m = evaluate_epoch(model, test_loader, device)
-                msg = " · ".join(f"{k}:{v:.4f}" for k, v in m.items())
-                logging.info(f"  🏁 Test[{ds_name}] | {msg}")
+    #     # ─ Guidance set ───────────────────────────────────────────────
+    #     loaders_dict = {m: mm_loader for m in modalities}  # всех кормим одним
+    #     guidance = build_guidance_set(model, loaders_dict,
+    #                                   top_k=cfg.top_k, device=device)
+    #     logging.info("guidance_set built ✔")
+
+    #     # ─ FREEZE SHARED ENCODER ──────────────────────────────────────
+    #     # Делаем это один раз – после Alignment-фазы, перед первой Concept-guided
+    #     if epoch == 0:
+    #         for param in model.shared_encoder.parameters():      # <-- имя слоя
+    #             param.requires_grad_(False)
+    #         logging.info("Shared encoder parameters are frozen ✔")
+
+    #     # ─ Concept-guided stage ───────────────────────────────────────
+    #     for mod in modalities:
+    #         total_loss, seen = 0.0, 0
+    #         for batch in tqdm(mm_loader, desc=f"[Concept] {mod}"):
+    #             feat = first_non_none_feature(batch, mod)
+    #             if feat is None:
+    #                 continue
+
+    #             mini = {
+    #                 "features": {mod: feat.to(device)},
+    #                 "labels":   move_labels_to_device(batch["labels"], device),
+    #                 "modality": mod,
+    #             }
+    #             loss = concept_guided_train_step(
+    #                 model, optimizer, mini,
+    #                 guidance_set=guidance,
+    #                 lambda_=cfg.lambda_w,
+    #             )
+    #             total_loss += loss
+    #             seen += 1
+    #         avg = total_loss / max(seen, 1)
+    #         logging.info(f"[Concept] {mod}: loss={avg:.4f}")
+
+    #     # ----- Validation -----------------------------------------
+    #     if dev_loaders is not None:
+    #         dev_emotion_avgs, dev_pkl_avgs = [], []
+    #         logging.info(f"\n—— Dev metrics ——")
+
+
+    #         for ds_name, dev_loader in dev_loaders.items():
+    #             m = evaluate_epoch(model, dev_loader, device)
+
+    #             # ----- EMOTION -----
+    #             if {"mF1", "mUAR"} <= m.keys():
+    #                 emo_avg = (m["mF1"] + m["mUAR"]) / 2
+    #                 dev_emotion_avgs.append(emo_avg)
+    #             else:
+    #                 emo_avg = None         # в этом датасете эмоций нет
+
+    #             # ----- PERSONALITY --
+    #             if {"ACC", "CCC"} <= m.keys():
+    #                 pkl_avg = (m["ACC"] + m["CCC"]) / 2
+    #                 dev_pkl_avgs.append(pkl_avg)
+    #             else:
+    #                 pkl_avg = None         # в этом датасете PKL нет
+
+    #             # лог
+    #             msg = " · ".join(f"{k}:{v:.4f}" for k, v in m.items())
+    #             logging.info(
+    #                 f"[Dev:{ds_name}] {msg}"
+    #                 + (f" · emo_avg:{emo_avg:.4f}" if emo_avg is not None else "")
+    #                 + (f" · pkl_avg:{pkl_avg:.4f}" if pkl_avg is not None else "")
+    #             )
+
+    #         # --- средние только по тем, что были ---
+    #         epoch_dev_emo = float(np.mean(dev_emotion_avgs)) if dev_emotion_avgs else None
+    #         epoch_dev_pkl = float(np.mean(dev_pkl_avgs))     if dev_pkl_avgs else None
+    #         logging.info(
+    #             "Mean Dev | "
+    #             + (f"emo_avg={epoch_dev_emo:.4f} " if epoch_dev_emo is not None else "")
+    #             + (f"pkl_avg={epoch_dev_pkl:.4f}"  if epoch_dev_pkl  is not None else "")
+    #         )
+
+    #         # --- early-stopping логика ---
+    #         improved_emo = True if epoch_dev_emo is None else epoch_dev_emo > best_emotion_avg
+    #         improved_pkl = True if epoch_dev_pkl is None else epoch_dev_pkl > best_pkl_avg
+
+    #         # Обнуляем общий счётчик, если улучшилась хотя бы одна ветка
+    #         if improved_emo or improved_pkl:
+    #             if epoch_dev_emo is not None: best_emotion_avg = epoch_dev_emo
+    #             if epoch_dev_pkl is not None: best_pkl_avg     = epoch_dev_pkl
+    #             patience_counter = 0
+
+    #             # сохраняем чекпойнт
+    #             os.makedirs(cfg.checkpoint_dir, exist_ok=True)
+    #             ckpt_path = Path(cfg.checkpoint_dir) / (
+    #                 f"best_ep{epoch+1}"
+    #                 + (f"_emo{epoch_dev_emo:.4f}" if epoch_dev_emo is not None else "")
+    #                 + (f"_pkl{epoch_dev_pkl:.4f}" if epoch_dev_pkl is not None else "")
+    #                 + ".pt"
+    #             )
+    #             torch.save(model.state_dict(), ckpt_path)
+    #             logging.info(f"✔ Best model saved: {ckpt_path.name}")
+
+    #         else:
+    #             patience_counter += 1
+    #             reasons = []
+    #             if not improved_emo: reasons.append("emotion")
+    #             if not improved_pkl: reasons.append("pkl")
+    #             logging.warning(
+    #                 f"No improvement in {', '.join(reasons)} — "
+    #                 f"patience {patience_counter}/{cfg.max_patience}"
+    #             )
+    #             if patience_counter >= cfg.max_patience:
+    #                 logging.info(f"Early stopping at epoch {epoch + 1}/{cfg.num_epochs}")
+    #                 break
+
+    #     # ─── Test after each epoch ─────────────────────────────────────
+    #     if test_loaders is not None:
+    #         logging.info("\n—— Test metrics ——")
+    #         for ds_name, test_loader in test_loaders.items():
+    #             m = evaluate_epoch(model, test_loader, device)
+    #             msg = " · ".join(f"{k}:{v:.4f}" for k, v in m.items())
+    #             logging.info(f"  🏁 Test[{ds_name}] | {msg}")

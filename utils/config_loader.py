@@ -78,6 +78,8 @@ class ConfigLoader:
         self.merge_probability = train_general.get("merge_probability", 0)
         self.batch_size = train_general.get("batch_size", 8)
         self.num_epochs = train_general.get("num_epochs", 100)
+        self.align_epochs = train_general.get("align_epochs", 10)
+        self.replay_epochs = train_general.get("replay_epochs", 100)
         self.max_patience = train_general.get("max_patience", 10)
         self.save_best_model = train_general.get("save_best_model", False)
         self.save_prepared_data = train_general.get("save_prepared_data", True)
