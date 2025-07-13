@@ -185,32 +185,34 @@ def train(cfg,
         model.train()
 
         # ─ Alignment stage ────────────────────────────────────────────
-        for mod in modalities:
-            total_loss, seen = 0.0, 0
-            for batch in tqdm(mm_loader, desc=f"[Align] {mod}"):
-                feat = first_non_none_feature(batch, mod)
-                if feat is None:
-                    continue
-
-                mini = {
-                    "features": {mod: feat.to(device)},
-                    "labels":   move_labels_to_device(batch["labels"], device),
-                    "modality": mod,
-                }
-                loss = alignment_train_step(
-                    model, optimizer, mini,
-                    beta1=cfg.beta1, beta2=cfg.beta2
-                )
-                total_loss += loss
-                seen += 1
-            avg = total_loss / max(seen, 1)
-            logging.info(f"[Align] {mod}: loss={avg:.4f}")
+        total_loss, seen = 0.0, 0
+        for batch in tqdm(mm_loader, desc="[Align] mix"):
+            # batch уже содержит ВСЕ модальности из collate_fn
+            loss = alignment_train_step(
+                model,
+                optimizer,
+                batch,                               # передаём как есть
+                beta_ortho = cfg.beta_ortho,         # новые имена параметров
+                beta_contr = cfg.beta_contr,
+                margin     = cfg.triplet_margin
+            )
+            total_loss += loss
+            seen += 1
+        avg = total_loss / max(seen, 1)
+        logging.info(f"[Align] mixed: loss={avg:.4f}")
 
         # ─ Guidance set ───────────────────────────────────────────────
         loaders_dict = {m: mm_loader for m in modalities}  # всех кормим одним
         guidance = build_guidance_set(model, loaders_dict,
                                       top_k=cfg.top_k, device=device)
         logging.info("guidance_set built ✔")
+
+        # ─ FREEZE SHARED ENCODER ──────────────────────────────────────
+        # Делаем это один раз – после Alignment-фазы, перед первой Concept-guided
+        if epoch == 0:
+            for param in model.shared_encoder.parameters():      # <-- имя слоя
+                param.requires_grad_(False)
+            logging.info("Shared encoder parameters are frozen ✔")
 
         # ─ Concept-guided stage ───────────────────────────────────────
         for mod in modalities:
