@@ -111,6 +111,11 @@ def get_metadata(
                 body_roi = im_rgb[bx[1]:bx[3], bx[0]:bx[2]]
                 if body_roi.size:
                     body_list.append(image_processing(body_roi, image_processor))
+                    face_list.append(image_processing(body_roi, image_processor))
+
+            else:
+                body_list.append(image_processing(im_rgb, image_processor))
+                face_list.append(image_processing(im_rgb, image_processor))
 
         counter += 1
 

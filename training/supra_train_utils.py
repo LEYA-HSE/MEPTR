@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from tqdm import tqdm
 
 # ======================================================================
 #                             LOSSES
@@ -91,9 +91,9 @@ def alignment_train_step(
     return loss.item()
 
 
-# # ======================================================================
-# #    СТРОИМ guidance-сет (отдельно эмоции и личностные факторы)
-# # ======================================================================
+# ======================================================================
+#    СТРОИМ guidance-сет (отдельно эмоции и личностные факторы)
+# ======================================================================
 # @torch.no_grad()
 # def build_guidance_set(model, dataloaders_by_modality, top_k=0.2, device="cuda"):
 #     """
@@ -145,6 +145,7 @@ def alignment_train_step(
 
 #         # ----- собрали всё -----
 #         if feats_e:
+#             print(len(conf_e), len(lbls_e), len(feats_e))
 #             feats_e  = torch.cat(feats_e)
 #             lbls_e   = torch.cat(lbls_e)
 #             conf_e   = torch.cat(conf_e)
@@ -216,6 +217,9 @@ def alignment_train_step(
 #     loss.backward()
 #     optimizer.step()
 #     return loss.item()
+
+
+## версия 3
 
 # @torch.no_grad()
 # def build_guidance_set(model, dataloaders_by_modality, top_k=20, device="cuda"):
@@ -306,7 +310,7 @@ def build_guidance_set(model, dataloaders_by_modality, top_k=20, device="cuda"):
         emo_scores = {i: [] for i in range(7)}
         pkl_errors = {(i, b): [] for i in range(5) for b in [0, 1]}
 
-        for batch in loader:
+        for batch in tqdm(loader):
             x_dict = {k: v.to(device) for k, v in batch["features"].items()}
             y_e = batch["labels"]["emotion"].to(device)  # [B, 7]
             y_p = batch["labels"]["personality"].to(device)  # [B, 5]
@@ -396,7 +400,7 @@ def concept_guided_train_step(model, optimizer, batch, guidance_set, lambda_):
         loss_task_p = F.mse_loss(preds_p[valid_p], y_p[valid_p])
         loss += loss_task_p
 
-        for i in range(5):  # для каждого признака
+        for i in range(5):
             bin_mask = y_p[valid_p][:, i] >= 0.5
             for bin_val in [0, 1]:
                 mask = (bin_mask if bin_val else ~bin_mask)
@@ -407,15 +411,15 @@ def concept_guided_train_step(model, optimizer, batch, guidance_set, lambda_):
                     rand_idx = torch.randint(0, bank.size(0), (mask.sum(),))
                     guided = bank[rand_idx].to(device)
                     sim_loss = similarity_loss(f_aux[valid_p][mask], guided)
-                    # print('per', sim_loss)
                     loss += lambda_ * sim_loss
 
     # --- Emotion loss + guidance
     if valid_e.any():
-        y_e_bin = (y_e[valid_e] > 0.5).int()
-        # probs = torch.softmax(logits_e[valid_e], dim=1)
-        # preds = probs.argmax(dim=1)
+        # y_e_label = y_e[valid_e].argmax(dim=1)
+        loss_task_e = F.binary_cross_entropy_with_logits(logits_e[valid_e], y_e[valid_e])
+        loss += loss_task_e
 
+        y_e_bin = (y_e[valid_e] > 0.5).int()
         for i in range(7):
             idxs = (y_e_bin[:, i] == 1).nonzero(as_tuple=True)[0]
             if idxs.numel() == 0:
@@ -425,7 +429,6 @@ def concept_guided_train_step(model, optimizer, batch, guidance_set, lambda_):
                 rand_idx = torch.randint(0, bank.size(0), (idxs.size(0),))
                 guided = bank[rand_idx].to(device)
                 sim_loss = similarity_loss(f_emo[valid_e][idxs], guided)
-                # print('emo', sim_loss)
                 loss += lambda_ * sim_loss
 
     loss.backward()

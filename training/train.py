@@ -19,7 +19,7 @@ train.py  – Supramodal multitask training (multimodal-loader вариант)
 """
 from __future__ import annotations
 
-import os
+import os, logging
 import random
 from pathlib import Path
 from typing import Dict, List
@@ -151,6 +151,11 @@ def train(cfg,
     seed_everything(cfg.random_seed)
     device = cfg.device
 
+    # prepare early-stopping
+    best_emotion_avg = -float("inf")
+    best_pkl_avg     = -float("inf")
+    patience_counter = 0
+
     # ── 0. Определяем живые модальности и их размерности ──────────────
     input_dims: Dict[str, int] = {}
     for batch in mm_loader:
@@ -176,7 +181,7 @@ def train(cfg,
 
     # ── 2. Сквозные эпохи (alignment → guidance → concept) ────────────
     for epoch in range(cfg.num_epochs):
-        print(f"\n═══ Epoch {epoch + 1}/{cfg.num_epochs} ═══")
+        logging.info(f"═══ Epoch {epoch + 1}/{cfg.num_epochs} ═══")
         model.train()
 
         # ─ Alignment stage ────────────────────────────────────────────
@@ -199,13 +204,13 @@ def train(cfg,
                 total_loss += loss
                 seen += 1
             avg = total_loss / max(seen, 1)
-            print(f"    {mod}: align_loss = {avg:.4f}")
+            logging.info(f"[Align] {mod}: loss={avg:.4f}")
 
         # ─ Guidance set ───────────────────────────────────────────────
         loaders_dict = {m: mm_loader for m in modalities}  # всех кормим одним
         guidance = build_guidance_set(model, loaders_dict,
                                       top_k=cfg.top_k, device=device)
-        print("    guidance_set built ✔")
+        logging.info("guidance_set built ✔")
 
         # ─ Concept-guided stage ───────────────────────────────────────
         for mod in modalities:
@@ -228,26 +233,86 @@ def train(cfg,
                 total_loss += loss
                 seen += 1
             avg = total_loss / max(seen, 1)
-            print(f"    {mod}: concept_loss = {avg:.4f}")
+            logging.info(f"[Concept] {mod}: loss={avg:.4f}")
 
-            # ----- Validation -----------------------------------------
-            if dev_loaders is not None:
-                print("\n—— Dev metrics ——")
-                for ds_name, dev_loader in dev_loaders.items():
-                    m = evaluate_epoch(model, dev_loader, device)
-                    msg = " · ".join(f"{k}:{v:.4f}" for k, v in m.items())
-                    print(f"  🔎 Dev[{ds_name}] | {msg}")
+        # ----- Validation -----------------------------------------
+        if dev_loaders is not None:
+            dev_emotion_avgs, dev_pkl_avgs = [], []
+            logging.info(f"\n—— Dev metrics ——")
 
-    # ── 3. Сохраняем итоговый чекпойнт ────────────────────────────────
-    os.makedirs(cfg.checkpoint_dir, exist_ok=True)
-    ckpt_path = Path(cfg.checkpoint_dir) / "supra_multitask_final.pt"
-    torch.save(model.state_dict(), ckpt_path)
-    print(f"\n✔ Model saved to {ckpt_path.resolve()}")
 
-    # ─ 4. Финальный тест ------------------------------------------
-    if test_loaders is not None:
-        print("\n—— Test metrics ——")
-        for ds_name, test_loader in test_loaders.items():
-            m = evaluate_epoch(model, test_loader, device)
-            msg = " · ".join(f"{k}:{v:.4f}" for k, v in m.items())
-            print(f"  🏁 Test[{ds_name}] | {msg}")
+            for ds_name, dev_loader in dev_loaders.items():
+                m = evaluate_epoch(model, dev_loader, device)
+
+                # ----- EMOTION -----
+                if {"mF1", "mUAR"} <= m.keys():
+                    emo_avg = (m["mF1"] + m["mUAR"]) / 2
+                    dev_emotion_avgs.append(emo_avg)
+                else:
+                    emo_avg = None         # в этом датасете эмоций нет
+
+                # ----- PERSONALITY --
+                if {"ACC", "CCC"} <= m.keys():
+                    pkl_avg = (m["ACC"] + m["CCC"]) / 2
+                    dev_pkl_avgs.append(pkl_avg)
+                else:
+                    pkl_avg = None         # в этом датасете PKL нет
+
+                # лог
+                msg = " · ".join(f"{k}:{v:.4f}" for k, v in m.items())
+                logging.info(
+                    f"[Dev:{ds_name}] {msg}"
+                    + (f" · emo_avg:{emo_avg:.4f}" if emo_avg is not None else "")
+                    + (f" · pkl_avg:{pkl_avg:.4f}" if pkl_avg is not None else "")
+                )
+
+            # --- средние только по тем, что были ---
+            epoch_dev_emo = float(np.mean(dev_emotion_avgs)) if dev_emotion_avgs else None
+            epoch_dev_pkl = float(np.mean(dev_pkl_avgs))     if dev_pkl_avgs else None
+            logging.info(
+                "Mean Dev | "
+                + (f"emo_avg={epoch_dev_emo:.4f} " if epoch_dev_emo is not None else "")
+                + (f"pkl_avg={epoch_dev_pkl:.4f}"  if epoch_dev_pkl  is not None else "")
+            )
+
+            # --- early-stopping логика ---
+            improved_emo = True if epoch_dev_emo is None else epoch_dev_emo > best_emotion_avg
+            improved_pkl = True if epoch_dev_pkl is None else epoch_dev_pkl > best_pkl_avg
+
+            # Обнуляем общий счётчик, если улучшилась хотя бы одна ветка
+            if improved_emo or improved_pkl:
+                if epoch_dev_emo is not None: best_emotion_avg = epoch_dev_emo
+                if epoch_dev_pkl is not None: best_pkl_avg     = epoch_dev_pkl
+                patience_counter = 0
+
+                # сохраняем чекпойнт
+                os.makedirs(cfg.checkpoint_dir, exist_ok=True)
+                ckpt_path = Path(cfg.checkpoint_dir) / (
+                    f"best_ep{epoch+1}"
+                    + (f"_emo{epoch_dev_emo:.4f}" if epoch_dev_emo is not None else "")
+                    + (f"_pkl{epoch_dev_pkl:.4f}" if epoch_dev_pkl is not None else "")
+                    + ".pt"
+                )
+                torch.save(model.state_dict(), ckpt_path)
+                logging.info(f"✔ Best model saved: {ckpt_path.name}")
+
+            else:
+                patience_counter += 1
+                reasons = []
+                if not improved_emo: reasons.append("emotion")
+                if not improved_pkl: reasons.append("pkl")
+                logging.warning(
+                    f"No improvement in {', '.join(reasons)} — "
+                    f"patience {patience_counter}/{cfg.max_patience}"
+                )
+                if patience_counter >= cfg.max_patience:
+                    logging.info(f"Early stopping at epoch {epoch + 1}/{cfg.num_epochs}")
+                    break
+
+        # ─── Test after each epoch ─────────────────────────────────────
+        if test_loaders is not None:
+            logging.info("\n—— Test metrics ——")
+            for ds_name, test_loader in test_loaders.items():
+                m = evaluate_epoch(model, test_loader, device)
+                msg = " · ".join(f"{k}:{v:.4f}" for k, v in m.items())
+                logging.info(f"  🏁 Test[{ds_name}] | {msg}")
