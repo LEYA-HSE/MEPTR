@@ -48,28 +48,6 @@ class ConfigLoader:
         self.average_features = dataloader_cfg.get("average_features", False)
 
         # ---------------------------
-        # Аудио
-        # ---------------------------
-        audio_cfg = self.config.get("audio", {})
-        self.sample_rate = audio_cfg.get("sample_rate", 16000)
-        self.wav_length = audio_cfg.get("wav_length", 2)
-        self.save_merged_audio = audio_cfg.get("save_merged_audio", True)
-        self.merged_audio_base_path = audio_cfg.get("merged_audio_base_path", "saved_merges")
-        self.merged_audio_suffix = audio_cfg.get("merged_audio_suffix", "_merged")
-        self.force_remerge = audio_cfg.get("force_remerge", False)
-
-        # ---------------------------
-        # Whisper / Текст
-        # ---------------------------
-        text_cfg = self.config.get("text", {})
-        self.text_source = text_cfg.get("source", "csv")
-        self.text_column = text_cfg.get("text_column", "text")
-        self.whisper_model = text_cfg.get("whisper_model", "tiny")
-        self.max_text_tokens = text_cfg.get("max_tokens", 15)
-        self.whisper_device = text_cfg.get("whisper_device", "cuda")
-        self.use_whisper_for_nontrain_if_no_text = text_cfg.get("use_whisper_for_nontrain_if_no_text", True)
-
-        # ---------------------------
         # Тренировка: общие
         # ---------------------------
         train_general = self.config.get("train", {}).get("general", {})
@@ -78,8 +56,6 @@ class ConfigLoader:
         self.merge_probability = train_general.get("merge_probability", 0)
         self.batch_size = train_general.get("batch_size", 8)
         self.num_epochs = train_general.get("num_epochs", 100)
-        self.align_epochs = train_general.get("align_epochs", 10)
-        self.replay_epochs = train_general.get("replay_epochs", 100)
         self.max_patience = train_general.get("max_patience", 10)
         self.save_best_model = train_general.get("save_best_model", False)
         self.save_prepared_data = train_general.get("save_prepared_data", True)
@@ -92,6 +68,8 @@ class ConfigLoader:
         self.lambda_personality = train_general.get("lambda_personality", 5)
         self.lambda_domain = train_general.get("lambda_domain", 0.1)
         self.checkpoint_dir = train_general.get("checkpoint_dir","checkpoints")
+        self.device = train_general.get("device", "cuda")
+
 
         # ---------------------------
         # Тренировка: параметры модели
@@ -107,11 +85,6 @@ class ConfigLoader:
         self.pers_loss_type = train_model.get("pers_loss_type", True)
         self.flag_emo_weight = train_model.get("flag_emo_weight", "ccc")
         self.hidden_dim = train_model.get("hidden_dim", 256)
-        self.beta_ortho = train_model.get("beta_ortho", 0.05)
-        self.beta_contr = train_model.get("beta_contr", 0.1)
-        self.triplet_margin = train_model.get("triplet_margin", 0.2)
-        self.lambda_w = train_model.get("lambda_w", 0.5)
-        self.top_k = train_model.get("top_k", 0.2)
         self.hidden_dim_gated = train_model.get("hidden_dim_gated", 256)
         self.num_transformer_heads = train_model.get("num_transformer_heads", 8)
         self.num_graph_heads = train_model.get("num_graph_heads", 8)
@@ -183,17 +156,7 @@ class ConfigLoader:
         self.audio_pooling = emb_cfg.get("audio_pooling", None)
         self.text_pooling  = emb_cfg.get("text_pooling", None)
         self.max_tokens = emb_cfg.get("max_tokens", 256)
-        self.device = emb_cfg.get("device", "cuda")
         self.window_size = emb_cfg.get("window_size", 5)
-
-        # ---------------------------
-        # Синтетика
-        # ---------------------------
-        # textgen_cfg = self.config.get("textgen", {})
-        # self.model_name = textgen_cfg.get("model_name", "deepseek-ai/DeepSeek-R1-Distill-Llama-8B")
-        # self.max_new_tokens = textgen_cfg.get("max_new_tokens", 50)
-        # self.temperature = textgen_cfg.get("temperature", 1.0)
-        # self.top_p = textgen_cfg.get("top_p", 0.95)
 
         if __name__ == "__main__":
             self.log_config()
@@ -212,9 +175,6 @@ class ConfigLoader:
 
         # Логируем обучающие параметры
         logging.info("--- Training Config ---")
-        logging.info(f"Sample Rate={self.sample_rate}, Wav Length={self.wav_length}s")
-        logging.info(f"Whisper Model={self.whisper_model}, Device={self.whisper_device}, MaxTokens={self.max_text_tokens}")
-        logging.info(f"use_whisper_for_nontrain_if_no_text={self.use_whisper_for_nontrain_if_no_text}")
         logging.info(f"DataLoader: batch_size={self.batch_size}, num_workers={self.num_workers}, shuffle={self.shuffle}")
         logging.info(f"Model Name: {self.model_name}")
         logging.info(f"Random Seed: {self.random_seed}")
@@ -249,7 +209,7 @@ class ConfigLoader:
         logging.info(f"Audio Model: {self.audio_model_name}, Text Model: {self.text_model_name}")
         logging.info(f"Audio dim={self.audio_embedding_dim}, Text dim={self.text_embedding_dim}")
         logging.info(f"Audio pooling={self.audio_pooling}, Text pooling={self.text_pooling}")
-        logging.info(f"Emb device={self.device}, Normalize={self.emb_normalize}")
+        logging.info(f"Device={self.device}, Normalize={self.emb_normalize}")
 
     def show_config(self):
         self.log_config()

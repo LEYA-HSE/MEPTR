@@ -1,3 +1,4 @@
+
 # coding: utf-8
 """
 train.py  – Supramodal multitask training (multimodal-loader вариант)
@@ -14,8 +15,7 @@ train.py  – Supramodal multitask training (multimodal-loader вариант)
     }
 
 Использование (в main.py):
-    from train import train as supra_train
-    supra_train(cfg, train_loader)
+    from train import train
 """
 from __future__ import annotations
 
@@ -29,12 +29,8 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from utils.measures import mf1, uar, acc_func, ccc
-from models.supra_models import SupraMultitaskModel
-from .supra_train_utils import (
-    alignment_train_step,
-    build_guidance_set,
-    concept_guided_train_step,
-)
+from utils.losses import MultiTaskLossWithNaN
+from models.models import MultiModalFusionModel
 
 
 # ─────────────────────────────── utils ────────────────────────────────
@@ -95,9 +91,7 @@ def evaluate_epoch(model: torch.nn.Module,
     pkl_preds, pkl_tgts = [], []
 
     for batch in loader:
-        feats = {m: (v.to(device) if v is not None else None)
-                 for m, v in batch["features"].items()}
-        out   = model(feats, modality=list(feats.keys())[0])
+        out   = model(batch)
 
         # raw logits → process_predictions → бинарные вектора без NaN
         logits_e = out["emotion_logits"]          # [B,7]  (на GPU)
@@ -175,7 +169,7 @@ def _log_dev_and_stop(model, dev_loaders, test_loaders, device,
     improved_emo = True if mean_emo is None else mean_emo > best_emo_get()
     improved_pkl = True if mean_pkl is None else mean_pkl > best_pkl_get()
 
-    if improved_emo or improved_pkl:
+    if improved_emo and improved_pkl:
         if mean_emo is not None:
             best_emo_set(mean_emo)
         if mean_pkl is not None:
@@ -217,9 +211,7 @@ def train(cfg,
           dev_loaders:  dict[str, DataLoader] | None = None,
           test_loaders: dict[str, DataLoader] | None = None):
     """
-    cfg          – объект-конфиг (поля: device, random_seed, num_epochs,
-                    hidden_dim, lr, beta1, beta2, lambda_w, top_k,
-                    checkpoint_dir)
+    cfg          – объект-конфиг
     mm_loader    – train-DataLoader (multimodal)
     dev_loader   – optional, для валидации
     test_loader  – optional, для оценки в конце
@@ -244,101 +236,79 @@ def train(cfg,
     if not input_dims:
         raise RuntimeError("Ни в одном примере не найдено ни одной модальности")
 
-    modalities: List[str] = list(input_dims.keys())
 
     # ── 1. Строим модель и оптимизатор ─────────────────────────────────
-    model = SupraMultitaskModel(
-        input_dims=input_dims,
+    model = MultiModalFusionModel(
         hidden_dim=cfg.hidden_dim,
         emo_out_dim=7,
         pkl_out_dim=5,
+        device = device
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr,
-                                   weight_decay=1e-5)
+                                   weight_decay=cfg.weight_decay)
 
-    # ───────────────── 2-A. ALIGNMENT-фаза ─────────────────────
-    for epoch in range(cfg.align_epochs):
-        logging.info(f"═══ ALIGNMENT {epoch + 1}/{cfg.align_epochs} ═══")
+    criterion = MultiTaskLossWithNaN(weight_emotion=cfg.weight_emotion,
+                                weight_personality=cfg.weight_pers,
+                                emo_weights=torch.FloatTensor([ 5.890161,7.534918,11.228363,27.722221,1.3049748,5.6189237,26.639517]).to(device),
+                                personality_loss_type=cfg.pers_loss_type)
+
+    for epoch in range(cfg.num_epochs):
+        logging.info(f"═══ EPOCHS {epoch + 1}/{cfg.num_epochs} ═══")
+
         model.train()
 
-        total_loss, steps = 0.0, 0
-        for batch in tqdm(mm_loader, desc="[Align]"):
-            loss = alignment_train_step(
-                model, optimizer, batch,
-                beta_ortho=cfg.beta_ortho,
-                beta_contr=cfg.beta_contr,
-                margin=cfg.triplet_margin,
-            )
-            total_loss += loss;  steps += 1
-        logging.info(f"[Align] mean-loss {total_loss / steps:.4f}")
+        total_loss = 0.0
+        total_samples = 0
+        total_preds_emo = []
+        total_targets_emo = []
+        total_preds_per = []
+        total_targets_per = []
 
-        # — Dev / Test (как раньше) —
-        if dev_loaders:
-            _log_dev_and_stop (
-                model,
-                dev_loaders,
-                test_loaders,
-                device,
-                epoch,
-                cfg.align_epochs + cfg.replay_epochs,
-                best_vals=(best_emotion_avg, best_pkl_avg),
-                patience=cfg.max_patience,
-                counter_ref=[
-                    lambda: best_emotion_avg,
-                    lambda: best_pkl_avg,
-                    lambda v: globals().update(best_emotion_avg=v),
-                    lambda v: globals().update(best_pkl_avg=v)
-                ],
-                patience_counter_ref=[
-                    lambda: patience_counter,
-                    lambda v: globals().update(patience_counter=v)
-                ],
-                cfg=cfg)
-    # ───────────────── 2-B. GUIDANCE-банк ──────────────────────
-    guidance = build_guidance_set(
-        model,
-        loaders_by_mod={m: mm_loader for m in modalities},
-        top_k=cfg.top_k,
-        device=device,
-    )
-    logging.info("Guidance bank collected ✅")
+        for batch in tqdm(mm_loader):
+            if batch is None:
+                continue
 
-    # Замораживаем shared-encoder
-    for p in model.shared_encoder.parameters():
-        p.requires_grad_(False)
-    logging.info("Shared encoder frozen ✅")
+            emo_labels = batch["labels"]["emotion"].to(device)
+            per_labels = batch["labels"]["personality"].to(device)
 
-    # ───────────────── 2-C. REPLAY / CONCEPT-guided ────────────
-    for epoch in range(cfg.replay_epochs):
-        logging.info(f"═══ REPLAY {epoch + 1}/{cfg.replay_epochs} ═══")
-        model.train()
+            valid_emo = ~torch.isnan(emo_labels).all(dim=1)
+            valid_per = ~torch.isnan(per_labels).all(dim=1)
 
-        for mod in modalities:
-            tl, steps = 0.0, 0
-            for batch in tqdm(mm_loader, desc=f"[Concept] {mod}"):
-                feat = first_non_none_feature(batch, mod)
-                if feat is None:
-                    continue
-                mini = {
-                    "features": {mod: feat.to(device)},
-                    "labels": move_labels_to_device(batch["labels"], device),
-                    "modality": mod,
-                }
-                loss = concept_guided_train_step(
-                    model, optimizer, mini,
-                    guidance_set=guidance,
-                    lambda_=cfg.lambda_w,
-                    gamma_task=cfg.gamma_task
-                )
-                tl += loss; steps += 1
-            logging.info(f"[Concept] {mod}: mean-loss {tl / max(steps, 1):.4f}")
+            outputs = model(batch)
 
-        # — Dev / Test + early-stopping (тот же код) —
+            loss = criterion(outputs, {"emotion": emo_labels, "personality": per_labels, 'valid_emo': valid_emo, 'valid_per': valid_per})
+            # print(loss)
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+            bs = emo_labels.shape[0]
+            total_loss += loss.item() * bs
+            total_samples += bs
+
+            preds_emo, terget_emo =  process_predictions(outputs['emotion_logits'][valid_emo], emo_labels[valid_emo])
+            total_preds_emo.extend(preds_emo)
+            total_targets_emo.extend(terget_emo)
+            preds_per = outputs['personality_scores'][valid_per]
+            terget_per = per_labels[valid_per]
+            total_preds_per.extend(preds_per.cpu().detach().numpy().tolist())
+            total_targets_per.extend(terget_per.cpu().detach().numpy().tolist())
+
+        train_loss = total_loss / total_samples
+        uar_m = uar(total_targets_emo, total_preds_emo)
+        mf1_m = mf1(total_targets_emo, total_preds_emo)
+
+        mean_train = np.mean([uar_m, mf1_m])
+
+        logging.info(
+            f"[TRAIN] Loss={train_loss:.4f}, UAR={uar_m:.4f}, MF1={mf1_m:.4f}, "
+            f"MEAN={mean_train:.4f}")
+
+        # — Dev / Test + early-stopping —
         if dev_loaders:
             stop = _log_dev_and_stop(
                 model, dev_loaders, test_loaders, device,
-                cfg.align_epochs + epoch,
-                cfg.align_epochs + cfg.replay_epochs,
+                epoch, cfg.num_epochs,
                 best_vals=(best_emotion_avg, best_pkl_avg),
                 patience=cfg.max_patience,
                 counter_ref=[
@@ -356,144 +326,3 @@ def train(cfg,
 
             if stop:
                 break
-
-
-    # ── 2. Сквозные эпохи (alignment → guidance → concept) ────────────
-    # for epoch in range(cfg.num_epochs):
-    #     logging.info(f"═══ Epoch {epoch + 1}/{cfg.num_epochs} ═══")
-    #     model.train()
-
-    #     # ─ Alignment stage ────────────────────────────────────────────
-    #     total_loss, seen = 0.0, 0
-    #     for batch in tqdm(mm_loader, desc="[Align] mix"):
-    #         # batch уже содержит ВСЕ модальности из collate_fn
-    #         loss = alignment_train_step(
-    #             model,
-    #             optimizer,
-    #             batch,                               # передаём как есть
-    #             beta_ortho = cfg.beta_ortho,         # новые имена параметров
-    #             beta_contr = cfg.beta_contr,
-    #             margin     = cfg.triplet_margin
-    #         )
-    #         total_loss += loss
-    #         seen += 1
-    #     avg = total_loss / max(seen, 1)
-    #     logging.info(f"[Align] mixed: loss={avg:.4f}")
-
-    #     # ─ Guidance set ───────────────────────────────────────────────
-    #     loaders_dict = {m: mm_loader for m in modalities}  # всех кормим одним
-    #     guidance = build_guidance_set(model, loaders_dict,
-    #                                   top_k=cfg.top_k, device=device)
-    #     logging.info("guidance_set built ✔")
-
-    #     # ─ FREEZE SHARED ENCODER ──────────────────────────────────────
-    #     # Делаем это один раз – после Alignment-фазы, перед первой Concept-guided
-    #     if epoch == 0:
-    #         for param in model.shared_encoder.parameters():      # <-- имя слоя
-    #             param.requires_grad_(False)
-    #         logging.info("Shared encoder parameters are frozen ✔")
-
-    #     # ─ Concept-guided stage ───────────────────────────────────────
-    #     for mod in modalities:
-    #         total_loss, seen = 0.0, 0
-    #         for batch in tqdm(mm_loader, desc=f"[Concept] {mod}"):
-    #             feat = first_non_none_feature(batch, mod)
-    #             if feat is None:
-    #                 continue
-
-    #             mini = {
-    #                 "features": {mod: feat.to(device)},
-    #                 "labels":   move_labels_to_device(batch["labels"], device),
-    #                 "modality": mod,
-    #             }
-    #             loss = concept_guided_train_step(
-    #                 model, optimizer, mini,
-    #                 guidance_set=guidance,
-    #                 lambda_=cfg.lambda_w,
-    #             )
-    #             total_loss += loss
-    #             seen += 1
-    #         avg = total_loss / max(seen, 1)
-    #         logging.info(f"[Concept] {mod}: loss={avg:.4f}")
-
-    #     # ----- Validation -----------------------------------------
-    #     if dev_loaders is not None:
-    #         dev_emotion_avgs, dev_pkl_avgs = [], []
-    #         logging.info(f"\n—— Dev metrics ——")
-
-
-    #         for ds_name, dev_loader in dev_loaders.items():
-    #             m = evaluate_epoch(model, dev_loader, device)
-
-    #             # ----- EMOTION -----
-    #             if {"mF1", "mUAR"} <= m.keys():
-    #                 emo_avg = (m["mF1"] + m["mUAR"]) / 2
-    #                 dev_emotion_avgs.append(emo_avg)
-    #             else:
-    #                 emo_avg = None         # в этом датасете эмоций нет
-
-    #             # ----- PERSONALITY --
-    #             if {"ACC", "CCC"} <= m.keys():
-    #                 pkl_avg = (m["ACC"] + m["CCC"]) / 2
-    #                 dev_pkl_avgs.append(pkl_avg)
-    #             else:
-    #                 pkl_avg = None         # в этом датасете PKL нет
-
-    #             # лог
-    #             msg = " · ".join(f"{k}:{v:.4f}" for k, v in m.items())
-    #             logging.info(
-    #                 f"[Dev:{ds_name}] {msg}"
-    #                 + (f" · emo_avg:{emo_avg:.4f}" if emo_avg is not None else "")
-    #                 + (f" · pkl_avg:{pkl_avg:.4f}" if pkl_avg is not None else "")
-    #             )
-
-    #         # --- средние только по тем, что были ---
-    #         epoch_dev_emo = float(np.mean(dev_emotion_avgs)) if dev_emotion_avgs else None
-    #         epoch_dev_pkl = float(np.mean(dev_pkl_avgs))     if dev_pkl_avgs else None
-    #         logging.info(
-    #             "Mean Dev | "
-    #             + (f"emo_avg={epoch_dev_emo:.4f} " if epoch_dev_emo is not None else "")
-    #             + (f"pkl_avg={epoch_dev_pkl:.4f}"  if epoch_dev_pkl  is not None else "")
-    #         )
-
-    #         # --- early-stopping логика ---
-    #         improved_emo = True if epoch_dev_emo is None else epoch_dev_emo > best_emotion_avg
-    #         improved_pkl = True if epoch_dev_pkl is None else epoch_dev_pkl > best_pkl_avg
-
-    #         # Обнуляем общий счётчик, если улучшилась хотя бы одна ветка
-    #         if improved_emo or improved_pkl:
-    #             if epoch_dev_emo is not None: best_emotion_avg = epoch_dev_emo
-    #             if epoch_dev_pkl is not None: best_pkl_avg     = epoch_dev_pkl
-    #             patience_counter = 0
-
-    #             # сохраняем чекпойнт
-    #             os.makedirs(cfg.checkpoint_dir, exist_ok=True)
-    #             ckpt_path = Path(cfg.checkpoint_dir) / (
-    #                 f"best_ep{epoch+1}"
-    #                 + (f"_emo{epoch_dev_emo:.4f}" if epoch_dev_emo is not None else "")
-    #                 + (f"_pkl{epoch_dev_pkl:.4f}" if epoch_dev_pkl is not None else "")
-    #                 + ".pt"
-    #             )
-    #             torch.save(model.state_dict(), ckpt_path)
-    #             logging.info(f"✔ Best model saved: {ckpt_path.name}")
-
-    #         else:
-    #             patience_counter += 1
-    #             reasons = []
-    #             if not improved_emo: reasons.append("emotion")
-    #             if not improved_pkl: reasons.append("pkl")
-    #             logging.warning(
-    #                 f"No improvement in {', '.join(reasons)} — "
-    #                 f"patience {patience_counter}/{cfg.max_patience}"
-    #             )
-    #             if patience_counter >= cfg.max_patience:
-    #                 logging.info(f"Early stopping at epoch {epoch + 1}/{cfg.num_epochs}")
-    #                 break
-
-    #     # ─── Test after each epoch ─────────────────────────────────────
-    #     if test_loaders is not None:
-    #         logging.info("\n—— Test metrics ——")
-    #         for ds_name, test_loader in test_loaders.items():
-    #             m = evaluate_epoch(model, test_loader, device)
-    #             msg = " · ".join(f"{k}:{v:.4f}" for k, v in m.items())
-    #             logging.info(f"  🏁 Test[{ds_name}] | {msg}")

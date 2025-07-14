@@ -1,657 +1,154 @@
-# coding: utf-8
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .help_layers import TransformerEncoderLayer
-from data_loading.pretrained_extractors import CustomMambaBlock
 
-class EmotionMamba(nn.Module):
-    def __init__(self, input_dim_emotion=512, input_dim_personality=512, len_seq = 30, hidden_dim=128, out_features=512, mamba_layer_number=2, mamba_d_model=256, per_activation="sigmoid", positional_encoding=True, num_transformer_heads=4, tr_layer_number=1, dropout=0.1, num_emotions=7, num_traits=5, device='cpu'):
+class ModalityProjector(nn.Module):
+    def __init__(self, in_dim, out_dim):
         super().__init__()
-
-        self.hidden_dim = hidden_dim
-
-        # self.emo_proj = nn.Sequential(
-        #     nn.Linear(input_dim_emotion, hidden_dim),
-        #     nn.LayerNorm(hidden_dim),
-        #     # nn.BatchNorm1d(len_seq),
-        #     nn.Dropout(dropout)
-        # )
-        self.emo_proj = nn.Sequential(
-            # nn.BatchNorm1d(len_seq),
-            nn.Linear(input_dim_emotion, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.Dropout(dropout)
+        self.proj = nn.Sequential(
+            nn.Linear(in_dim, out_dim),
+            nn.ReLU(),
+            nn.LayerNorm(out_dim)
         )
+    def forward(self, x):
+        return self.proj(x)
 
-        self.emotion_encoder = nn.ModuleList([
-            CustomMambaBlock(hidden_dim, mamba_d_model, dropout=dropout)
-            for _ in range(mamba_layer_number)
-        ])
-
-        self.emotion_fc_out = nn.Sequential(
-            nn.Linear(hidden_dim, out_features),
-            nn.LayerNorm(out_features),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(out_features, num_emotions)
-        )
-
-    def forward(self, emotion_input=None, personality_input=None, return_features=False):
-        emo = self.emo_proj(emotion_input)
-
-        for layer in self.emotion_encoder:
-            emo = layer(emo)
-
-        out_emo = self.emotion_fc_out(emo.mean(dim=1))  # (B, num_emotions)
-
-        if return_features:
-            return {
-                'emotion_logits': out_emo,
-                'last_encoder_features': emo,
-            }
-        else:
-            return {'emotion_logits': out_emo}
-
-class PersonalityMamba(nn.Module):
-    def __init__(self, input_dim_emotion=512, input_dim_personality=512, len_seq = 30, hidden_dim=128, out_features=512, mamba_layer_number=2, mamba_d_model=256, per_activation="sigmoid", positional_encoding=True, num_transformer_heads=4, tr_layer_number=1, dropout=0.1, num_emotions=7, num_traits=5, device='cpu'):
+class AdapterFusion(nn.Module):
+    def __init__(self, hidden_dim):
         super().__init__()
-
-        self.hidden_dim = hidden_dim
-
-        # self.per_proj = nn.Sequential(
-        #     nn.Linear(input_dim_personality, hidden_dim),
-        #     # nn.BatchNorm1d(len_seq),
-        #     nn.LayerNorm(hidden_dim),
-        #     nn.Dropout(dropout)
-        # )
-
-        self.per_proj = nn.Sequential(
-            nn.Linear(input_dim_personality, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.Dropout(dropout)
+        self.adapter = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 2, hidden_dim)
         )
+        self.layernorm = nn.LayerNorm(hidden_dim)
+    def forward(self, x):
+        return self.layernorm(x + self.adapter(x))
 
-        self.personality_encoder = nn.ModuleList([
-            CustomMambaBlock(hidden_dim, mamba_d_model, dropout=dropout)
-            for _ in range(mamba_layer_number)
-        ])
-
-        self.personality_fc_out = nn.Sequential(
-            nn.Linear(hidden_dim, out_features),
-            nn.LayerNorm(out_features),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(out_features, num_traits)
-        )
-
-        if per_activation == "sigmoid":
-            self.activation = nn.Sigmoid()
-        elif per_activation == "relu":
-            self.activation = nn.ReLU()
-
-    def forward(self, emotion_input=None, personality_input=None, return_features=False, activation=True):
-        per = self.per_proj(personality_input)
-
-        for layer in self.personality_encoder:
-            per = layer(per)
-
-        out_per = self.personality_fc_out(per.mean(dim=1))
-
-        if return_features:
-            return {
-                'personality_scores': self.activation(out_per) if activation else out_per,
-                'last_encoder_features': per,
-            }
-        else:
-            return {'personality_scores': self.activation(out_per) if activation else out_per}
-
-class EmotionTransformer(nn.Module):
-    def __init__(self, input_dim_emotion=512, input_dim_personality=512, len_seq = 30, hidden_dim=128, out_features=512, mamba_layer_number=2, mamba_d_model=256, per_activation="sigmoid", positional_encoding=True, num_transformer_heads=4, tr_layer_number=1, dropout=0.1, num_emotions=7, num_traits=5, device='cpu'):
+class GuideBank(nn.Module):
+    def __init__(self, out_dim, hidden_dim):
         super().__init__()
+        self.embeddings = nn.Parameter(torch.randn(out_dim, hidden_dim))
+    def forward(self):
+        return self.embeddings
 
-        self.hidden_dim = hidden_dim
+class GraphAttentionLayer(nn.Module):
+    def __init__(self, in_dim, out_dim=None, dropout=0.1, alpha=0.2):
+        super(GraphAttentionLayer, self).__init__()
+        out_dim = out_dim or in_dim
+        self.W = nn.Linear(in_dim, out_dim, bias=False)
+        self.a = nn.Parameter(torch.empty(size=(2 * out_dim, 1)))
+        nn.init.xavier_uniform_(self.a.data, gain=1.414)
+        self.leakyrelu = nn.LeakyReLU(alpha)
+        self.dropout = nn.Dropout(dropout)
+        self.out_dim = out_dim
 
-        self.emo_proj = nn.Sequential(
-            # nn.BatchNorm1d(len_seq),
-            nn.Linear(input_dim_emotion, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.Dropout(dropout)
-        )
+    def forward(self, h, adj):
+        # h: [B, N, D]
+        # adj: [B, N, N] with 0/1 mask
+        B, N, D = h.size()
+        Wh = self.W(h)  # [B, N, D']
+        Wh_i = Wh.unsqueeze(2).expand(-1, -1, N, -1)  # [B, N, N, D']
+        Wh_j = Wh.unsqueeze(1).expand(-1, N, -1, -1)  # [B, N, N, D']
+        a_input = torch.cat([Wh_i, Wh_j], dim=-1)  # [B, N, N, 2D']
+        e = self.leakyrelu(torch.matmul(a_input, self.a).squeeze(-1))  # [B, N, N]
 
-        self.emotion_encoder = nn.ModuleList([
-            TransformerEncoderLayer(
-                input_dim=hidden_dim,
-                num_heads=num_transformer_heads,
-                dropout=dropout,
-                positional_encoding=positional_encoding
-            ) for _ in range(tr_layer_number)
-        ])
+        zero_vec = -9e15 * torch.ones_like(e)
+        attention = torch.where(adj > 0, e, zero_vec)  # mask non-neighbors
+        attention = F.softmax(attention, dim=-1)
+        attention = self.dropout(attention)
 
-        self.emotion_fc_out = nn.Sequential(
-            nn.Linear(hidden_dim, out_features),
-            nn.LayerNorm(out_features),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(out_features, num_emotions)
-        )
+        h_prime = torch.matmul(attention, Wh)  # [B, N, D']
+        return h_prime
 
-    def forward(self, emotion_input=None, personality_input=None, return_features=False):
-        emo = self.emo_proj(emotion_input)
-
-        for layer in self.emotion_encoder:
-            emo += layer(emo, emo, emo)
-
-        out_emo = self.emotion_fc_out(emo.mean(dim=1))  # (B, num_emotions)
-
-        if return_features:
-            return {
-                'emotion_logits': out_emo,
-                'last_encoder_features': emo,
-            }
-        else:
-            return {'emotion_logits': out_emo}
-
-class PersonalityTransformer(nn.Module):
-    def __init__(self, input_dim_emotion=512, input_dim_personality=512, len_seq = 30, hidden_dim=128, out_features=512, mamba_layer_number=2, mamba_d_model=256, per_activation="sigmoid", positional_encoding=True, num_transformer_heads=4, tr_layer_number=1, dropout=0.1, num_emotions=7, num_traits=5, device='cpu'):
+class MultiModalFusionModel(nn.Module):
+    def __init__(self, hidden_dim=512, num_heads=8, emo_out_dim=7, pkl_out_dim=5, device='cpu'):
         super().__init__()
-
-        self.hidden_dim = hidden_dim
-
-        self.per_proj = nn.Sequential(
-            # nn.BatchNorm1d(len_seq),
-            nn.Linear(input_dim_personality, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.Dropout(dropout)
-        )
-
-        self.personality_encoder = nn.ModuleList([
-            TransformerEncoderLayer(
-                input_dim=hidden_dim,
-                num_heads=num_transformer_heads,
-                dropout=dropout,
-                positional_encoding=positional_encoding
-            ) for _ in range(tr_layer_number)
-        ])
-
-        self.personality_fc_out = nn.Sequential(
-            nn.Linear(hidden_dim, out_features),
-            nn.LayerNorm(out_features),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(out_features, num_traits)
-        )
-
-        if per_activation == "sigmoid":
-            self.activation = nn.Sigmoid()
-        elif per_activation == "relu":
-            self.activation = nn.ReLU()
-
-    def forward(self, emotion_input=None, personality_input=None, return_features=False, activation=True):
-        per = self.per_proj(personality_input)
-
-        for layer in self.personality_encoder:
-            per += layer(per, per, per)
-
-        out_per = self.personality_fc_out(per.mean(dim=1))
-
-        if return_features:
-            return {
-                'personality_scores': self.activation(out_per) if activation else out_per,
-                'last_encoder_features': per,
-            }
-        else:
-            return {'personality_scores': self.activation(out_per) if activation else out_per}
-
-class FusionTransformer(nn.Module):
-    def __init__(self, emo_model, per_model, input_dim_emotion=512, input_dim_personality=512,
-                 hidden_dim=128, out_features=512, mamba_layer_number=2, mamba_d_model=256,
-                 per_activation="sigmoid", positional_encoding=True, num_transformer_heads=4,
-                 tr_layer_number=1, dropout=0.1, num_emotions=7, num_traits=5, device='cpu'):
-        super().__init__()
-
-        self.hidden_dim = hidden_dim
-
-        self.emo_model = emo_model
-        self.per_model = per_model
-
-        for param in self.emo_model.parameters():
-            param.requires_grad = False
-
-        for param in self.per_model.parameters():
-            param.requires_grad = False
-
-        self.emo_proj = nn.Sequential(
-            nn.Linear(self.emo_model.hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.Dropout(dropout)
-        )
-
-        self.per_proj = nn.Sequential(
-            nn.Linear(self.per_model.hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.Dropout(dropout)
-        )
-
-        self.emotion_to_personality_attn = nn.ModuleList([
-            TransformerEncoderLayer(
-                input_dim=hidden_dim,
-                num_heads=num_transformer_heads,
-                dropout=dropout,
-                positional_encoding=positional_encoding
-            ) for _ in range(tr_layer_number)
-        ])
-
-        self.personality_to_emotion_attn = nn.ModuleList([
-            TransformerEncoderLayer(
-                input_dim=hidden_dim,
-                num_heads=num_transformer_heads,
-                dropout=dropout,
-                positional_encoding=positional_encoding
-            ) for _ in range(tr_layer_number)
-        ])
-
-        self.emotion_personality_fc_out = nn.Sequential(
-            nn.Linear(hidden_dim*2, out_features),
-            nn.LayerNorm(out_features),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(out_features, num_emotions)
-        )
-
-        self.personality_emotion_fc_out = nn.Sequential(
-            nn.Linear(hidden_dim*2, out_features),
-            nn.LayerNorm(out_features),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(out_features, num_traits)
-        )
-
-        if per_activation == "sigmoid":
-            self.activation = nn.Sigmoid()
-        elif per_activation == "relu":
-            self.activation = nn.ReLU()
-
-    def forward(self, emotion_input=None, personality_input=None, return_features=False, activation=True):
-        emo_features = self.emo_model(emotion_input=emotion_input, return_features=True)
-        per_features = self.per_model(personality_input=personality_input, return_features=True)
-
-        emo_emd = self.emo_proj(emo_features['last_encoder_features'])
-        per_emd = self.per_proj(per_features['last_encoder_features'])
-
-        for layer in self.emotion_to_personality_attn:
-            emo_emd += layer(emo_emd, per_emd, per_emd) # or per_emd, emo_emd, emo_emd
-
-        for layer in self.personality_to_emotion_attn:
-            per_emd += layer(per_emd, emo_emd, emo_emd) # or emo_emd, per_emd, per_emd
-
-        fused = torch.cat([emo_emd, per_emd], dim=-1)
-        emotion_logits = self.emotion_personality_fc_out(fused.mean(dim=1))
-        personality_scores = self.personality_emotion_fc_out(fused.mean(dim=1))
-
-        personality_scores = self.activation(personality_scores) if activation else personality_scores
-
-        if return_features:
-            return {
-                'emotion_logits': (emotion_logits+emo_features['emotion_logits'])/2,
-                'personality_scores': (personality_scores+per_features['personality_scores'])/2,
-                'last_emo_encoder_features': emo_emd,
-                'last_per_encoder_features': per_emd,
-            }
-        else:
-            return {'emotion_logits': (emotion_logits+emo_features['emotion_logits'])/2,
-                    'personality_scores': (personality_scores+per_features['personality_scores'])/2,}
-
-class EnhancedFusionTransformer(nn.Module):
-    def __init__(self, emo_model, per_model, input_dim_emotion=512, input_dim_personality=512,
-                 hidden_dim=256, out_features=512, per_activation="sigmoid", mamba_layer_number=2, mamba_d_model=256,
-                 positional_encoding=True, num_transformer_heads=8, tr_layer_number=2,
-                 dropout=0.2, num_emotions=7, num_traits=5, device='cpu'):
-        super().__init__()
-
         self.hidden_dim = hidden_dim
         self.device = device
 
-        # Замороженные предобученные модели
-        self.emo_model = emo_model
-        self.per_model = per_model
-        for param in self.emo_model.parameters():
-            param.requires_grad = False
-        for param in self.per_model.parameters():
-            param.requires_grad = False
+        self.modalities = {
+            'body': 1024 * 2,
+            'face': 512 * 2,
+            'scene': 768 * 2,
+            'audio': 256 * 2,
+            'text': 256 * 2,
+        }
 
-        # Улучшенные проекционные слои с расширенной емкостью
-        self.emo_proj = nn.Sequential(
-            nn.Linear(self.emo_model.hidden_dim, hidden_dim*2),
-            nn.GELU(),
-            nn.Linear(hidden_dim*2, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.Dropout(dropout)
-        )
+        self.projectors = nn.ModuleDict({
+            mod: nn.Sequential(
+                ModalityProjector(in_dim, hidden_dim),
+                AdapterFusion(hidden_dim)
+            )
+            for mod, in_dim in self.modalities.items()
+        })
 
-        self.per_proj = nn.Sequential(
-            nn.Linear(self.per_model.hidden_dim, hidden_dim*2),
-            nn.GELU(),
-            nn.Linear(hidden_dim*2, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.Dropout(dropout)
-        )
+        self.graph_attn = GraphAttentionLayer(hidden_dim)
 
-        # Улучшенные трансформерные слои с остаточными соединениями
-        self.emotion_to_personality_attn = nn.ModuleList([
-            TransformerEncoderLayer(
-                input_dim=hidden_dim,
-                num_heads=num_transformer_heads,
-                dropout=dropout,
-                positional_encoding=positional_encoding
-            ) for _ in range(tr_layer_number)
-        ])
+        self.emo_query = nn.Parameter(torch.randn(1, 1, hidden_dim))
+        self.pkl_query = nn.Parameter(torch.randn(1, 1, hidden_dim))
 
-        self.personality_to_emotion_attn = nn.ModuleList([
-            TransformerEncoderLayer(
-                input_dim=hidden_dim,
-                num_heads=num_transformer_heads,
-                dropout=dropout,
-                positional_encoding=positional_encoding
-            ) for _ in range(tr_layer_number)
-        ])
+        self.cross_attn = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=num_heads, batch_first=True)
 
-        # Доменно-специфичные адаптивные веса
-        self.domain_weights = nn.Parameter(torch.ones(2))
-        self.softmax = nn.Softmax(dim=0)
+        self.emo_head = nn.Linear(hidden_dim, emo_out_dim)
+        self.pkl_head = nn.Linear(hidden_dim, pkl_out_dim)
 
-        # Улучшенные выходные слои с промежуточными представлениями
-        self.emotion_head = nn.Sequential(
-            nn.Linear(hidden_dim*2, out_features),
-            nn.LayerNorm(out_features),
-            nn.GELU(),
-            nn.Dropout(dropout*0.5),
-            nn.Linear(out_features, num_emotions)
-        )
+        self.guide_bank_emo = GuideBank(emo_out_dim, hidden_dim)
+        self.guide_bank_pkl = GuideBank(pkl_out_dim, hidden_dim)
 
-        self.personality_head = nn.Sequential(
-            nn.Linear(hidden_dim*2, out_features),
-            nn.LayerNorm(out_features),
-            nn.GELU(),
-            nn.Dropout(dropout*0.5),
-            nn.Linear(out_features, num_traits)
-        )
+        self.emo_logit_proj = nn.Linear(emo_out_dim, hidden_dim)
+        self.per_logit_proj = nn.Linear(pkl_out_dim, hidden_dim)
 
-        # Активации
-        self.per_activation = nn.Sigmoid() if per_activation == "sigmoid" else nn.ReLU()
-        self.gelu = nn.GELU()
+    def forward(self, batch):
+        x_mods = []
+        valid_modalities = []
+        for mod, feat in batch['features'].items():
+            if feat is not None and mod in self.projectors:
+                x_proj = self.projectors[mod](feat.to(self.device))  # [D]
+                x_mods.append(x_proj)
+                valid_modalities.append(mod)
 
-    def forward(self, emotion_input=None, personality_input=None, return_features=False, activation=True):
-        # Получаем фичи из предобученных моделей
-        emo_features = self.emo_model(emotion_input=emotion_input, return_features=True)
-        per_features = self.per_model(personality_input=personality_input, return_features=True)
+        if not x_mods:
+            raise ValueError("No valid modality features found")
 
-        # Проекция в общее пространство
-        emo_emb = self.emo_proj(emo_features['last_encoder_features'])
-        per_emb = self.per_proj(per_features['last_encoder_features'])
+        x_mods = torch.stack(x_mods, dim=1)  # [B=1, N, D]
+        B, N, D = x_mods.size()
 
-        # Кросс-доменное внимание с остаточными соединениями
-        for layer in self.emotion_to_personality_attn:
-            emo_emb = emo_emb + self.gelu(layer(emo_emb, per_emb, per_emb))
+        # Создаем adjacency matrix для N модальностей (полносвязный граф)
+        adj = torch.ones(B, N, N, device=self.device)
 
-        for layer in self.personality_to_emotion_attn:
-            per_emb = per_emb + self.gelu(layer(per_emb, emo_emb, emo_emb))
+        context = self.graph_attn(x_mods, adj)  # [B, N, D]
 
-        # Конкатенация и адаптивное взвешивание
-        fused = torch.cat([emo_emb, per_emb], dim=-1)
+        emo_q = self.emo_query.expand(B, -1, -1)  # [B, 1, D]
+        pkl_q = self.pkl_query.expand(B, -1, -1)  # [B, 1, D]
 
-        # Средний пулинг с сохранением размерности [batch, seq, features] -> [batch, features]
-        pooled = fused.mean(dim=1)
+        emo_repr, _ = self.cross_attn(emo_q, context, context)
+        pkl_repr, _ = self.cross_attn(pkl_q, context, context)
 
-        # Вычисляем доменные веса
-        domain_weights = self.softmax(self.domain_weights)
+        emo_repr = emo_repr.squeeze(1)
+        pkl_repr = pkl_repr.squeeze(1)
 
-        # Прогнозирование с адаптивным взвешиванием
-        emotion_logits = self.emotion_head(pooled) * domain_weights[0]
-        personality_scores = self.personality_head(pooled) * domain_weights[1]
+        emo_logit_feats = []
+        per_logit_feats = []
+        for mod in valid_modalities:
+            emo_logit_feats.append(batch['emotion_logits'][mod].to(self.device))
+            per_logit_feats.append(batch['personality_scores'][mod].to(self.device))
 
-        # Residual connection с оригинальными предсказаниями
-        emotion_logits = (emotion_logits + emo_features['emotion_logits']) / 2
-        personality_scores = (self.per_activation(personality_scores) + per_features['personality_scores']) / 2
+        if emo_logit_feats:
+            emo_repr += self.emo_logit_proj(torch.stack(emo_logit_feats).mean(dim=0))
+        if per_logit_feats:
+            pkl_repr += self.per_logit_proj(torch.stack(per_logit_feats).mean(dim=0))
 
-        if return_features:
-            return {
-                'emotion_logits': emotion_logits,
-                'personality_scores': personality_scores,
-                'domain_weights': domain_weights.detach(),
-                'last_emo_encoder_features': emo_emb,
-                'last_per_encoder_features': per_emb,
-            }
-        else:
-            return {
-                'emotion_logits': emotion_logits,
-                'personality_scores': personality_scores
-            }
+        emo_pred = self.emo_head(emo_repr)
+        pkl_pred = torch.sigmoid(self.pkl_head(pkl_repr))
 
-class ProbabilityFusion(nn.Module):
-    def __init__(self, num_matrices=2, num_classes=7):
-        super(ProbabilityFusion, self).__init__()
-        self.weights = nn.Parameter(torch.rand(num_matrices, num_classes))
+        guides_emo = self.guide_bank_emo()  # [emo_out_dim, D]
+        guides_pkl = self.guide_bank_pkl()  # [pkl_out_dim, D]
 
-    def forward(self, pred):
-        # print(pred)
-        normalized_weights = torch.softmax(self.weights, dim=0)
-        weighted_matrix = sum(mat * normalized_weights[i] for i, mat in enumerate(pred))
-        return weighted_matrix, normalized_weights
+        emo_sim = F.cosine_similarity(emo_repr.unsqueeze(1), guides_emo.unsqueeze(0), dim=-1)
+        pkl_sim = F.cosine_similarity(pkl_repr.unsqueeze(1), guides_pkl.unsqueeze(0), dim=-1)
 
-class FusionTransformerWithProbWeightedFusion(nn.Module):
-    def __init__(self, emo_model, per_model, input_dim_emotion=512, input_dim_personality=512, mamba_layer_number=2, mamba_d_model=256,
-                 hidden_dim=256, out_features=512, per_activation="sigmoid",
-                 positional_encoding=True, num_transformer_heads=8, tr_layer_number=2,
-                 dropout=0.2, num_emotions=7, num_traits=5, device='cpu'):
-        super().__init__()
+        emo_final = (emo_pred + emo_sim) / 2
+        pkl_final = (pkl_pred + torch.sigmoid(pkl_sim)) / 2
 
-        self.hidden_dim = hidden_dim
-        self.device = device
-
-        # Замороженные предобученные модели
-        self.emo_model = emo_model
-        self.per_model = per_model
-        for param in self.emo_model.parameters():
-            param.requires_grad = False
-        for param in self.per_model.parameters():
-            param.requires_grad = False
-
-        # Улучшенные проекционные слои с расширенной емкостью
-        self.emo_proj = nn.Sequential(
-            nn.Linear(self.emo_model.hidden_dim, hidden_dim*2),
-            nn.GELU(),
-            nn.Linear(hidden_dim*2, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.Dropout(dropout)
-        )
-
-        self.per_proj = nn.Sequential(
-            nn.Linear(self.per_model.hidden_dim, hidden_dim*2),
-            nn.GELU(),
-            nn.Linear(hidden_dim*2, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.Dropout(dropout)
-        )
-
-        # Улучшенные трансформерные слои с остаточными соединениями
-        self.emotion_to_personality_attn = nn.ModuleList([
-            TransformerEncoderLayer(
-                input_dim=hidden_dim,
-                num_heads=num_transformer_heads,
-                dropout=dropout,
-                positional_encoding=positional_encoding
-            ) for _ in range(tr_layer_number)
-        ])
-
-        self.personality_to_emotion_attn = nn.ModuleList([
-            TransformerEncoderLayer(
-                input_dim=hidden_dim,
-                num_heads=num_transformer_heads,
-                dropout=dropout,
-                positional_encoding=positional_encoding
-            ) for _ in range(tr_layer_number)
-        ])
-
-        self.weighted_emo = ProbabilityFusion(num_matrices=2, num_classes=num_emotions)
-        self.weighted_per = ProbabilityFusion(num_matrices=2, num_classes=num_traits)
-
-        # Улучшенные выходные слои с промежуточными представлениями
-        self.emotion_head = nn.Sequential(
-            nn.Linear(hidden_dim*2, out_features),
-            nn.LayerNorm(out_features),
-            nn.GELU(),
-            nn.Dropout(dropout*0.5),
-            nn.Linear(out_features, num_emotions)
-        )
-
-        self.personality_head = nn.Sequential(
-            nn.Linear(hidden_dim*2, out_features),
-            nn.LayerNorm(out_features),
-            nn.GELU(),
-            nn.Dropout(dropout*0.5),
-            nn.Linear(out_features, num_traits)
-        )
-
-        # Активации
-        self.per_activation = nn.Sigmoid() if per_activation == "sigmoid" else nn.ReLU()
-        self.gelu = nn.GELU()
-
-    def forward(self, emotion_input=None, personality_input=None, return_features=False, activation=True):
-        # Получаем фичи из предобученных моделей
-        emo_features = self.emo_model(emotion_input=emotion_input, return_features=True)
-        per_features = self.per_model(personality_input=personality_input, return_features=True)
-
-        # Проекция в общее пространство
-        emo_emb = self.emo_proj(emo_features['last_encoder_features'])
-        per_emb = self.per_proj(per_features['last_encoder_features'])
-
-        # Кросс-доменное внимание с остаточными соединениями
-        for layer in self.emotion_to_personality_attn:
-            emo_emb = emo_emb + layer(per_emb, emo_emb, emo_emb)
-
-        for layer in self.personality_to_emotion_attn:
-            per_emb = per_emb + layer(emo_emb, per_emb, per_emb)
-
-        # Конкатенация и адаптивное взвешивание
-        fused = torch.cat([emo_emb, per_emb], dim=-1)
-
-        # Средний пулинг с сохранением размерности [batch, seq, features] -> [batch, features]
-        pooled = fused.mean(dim=1)
-
-        emotion_logits = self.emotion_head(pooled)
-        personality_scores = self.personality_head(pooled)
-
-        emotion_logits, weighted_emo = self.weighted_emo([emotion_logits, emo_features['emotion_logits']])
-        personality_scores, weighted_per = self.weighted_per([self.per_activation(personality_scores), per_features['personality_scores']])
-
-        if return_features:
-            return {
-                'emotion_logits': emotion_logits,
-                'personality_scores': personality_scores,
-                'weighted_emo': weighted_emo,
-                'weighted_per': weighted_per,
-                'last_emo_encoder_features': emo_emb,
-                'last_per_encoder_features': per_emb,
-            }
-        else:
-            return {
-                'emotion_logits': emotion_logits,
-                'personality_scores': personality_scores
-            }
-
-class FusionTransformer2(nn.Module):
-    def __init__(self, emo_model, per_model, input_dim_emotion=512, input_dim_personality=512, hidden_dim=128, out_features=512, mamba_layer_number=2, mamba_d_model=256, per_activation="sigmoid", positional_encoding=True, num_transformer_heads=4, tr_layer_number=1, dropout=0.1, num_emotions=7, num_traits=5, device='cpu'):
-        super().__init__()
-
-        self.hidden_dim = hidden_dim
-
-        self.emo_model = emo_model
-        self.per_model = per_model
-
-        for param in self.emo_model.parameters():
-            param.requires_grad = False
-
-        for param in self.per_model.parameters():
-            param.requires_grad = False
-
-        self.emo_proj = nn.Sequential(
-            nn.Linear(self.emo_model.hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.Dropout(dropout)
-        )
-
-        self.per_proj = nn.Sequential(
-            nn.Linear(self.per_model.hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.Dropout(dropout)
-        )
-
-        self.emotion_to_personality_attn = nn.ModuleList([
-            TransformerEncoderLayer(
-                input_dim=hidden_dim,
-                num_heads=num_transformer_heads,
-                dropout=dropout,
-                positional_encoding=positional_encoding
-            ) for _ in range(tr_layer_number)
-        ])
-
-        self.personality_to_emotion_attn = nn.ModuleList([
-            TransformerEncoderLayer(
-                input_dim=hidden_dim,
-                num_heads=num_transformer_heads,
-                dropout=dropout,
-                positional_encoding=positional_encoding
-            ) for _ in range(tr_layer_number)
-        ])
-
-        self.emotion_personality_fc_out = nn.Sequential(
-            nn.Linear(hidden_dim*2, out_features),
-            nn.LayerNorm(out_features),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(out_features, num_emotions)
-        )
-
-        self.personality_emotion_fc_out = nn.Sequential(
-            nn.Linear(hidden_dim*2, out_features),
-            nn.LayerNorm(out_features),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(out_features, num_traits)
-        )
-
-        if per_activation == "sigmoid":
-            self.activation = nn.Sigmoid()
-        elif per_activation == "relu":
-            self.activation = nn.ReLU()
-
-    def forward(self, emotion_input=None, personality_input=None, return_features=False, activation=True):
-        emo_features = self.emo_model(emotion_input=emotion_input, return_features=True)
-        per_features = self.per_model(personality_input=personality_input, return_features=True)
-
-        emo_emd = self.emo_proj(emo_features['last_encoder_features'])
-        per_emd = self.per_proj(per_features['last_encoder_features'])
-
-        for layer in self.emotion_to_personality_attn:
-            emo_emd += layer(emo_emd, per_emd, per_emd) # or per_emd, emo_emd, emo_emd
-
-        for layer in self.personality_to_emotion_attn:
-            per_emd += layer(per_emd, emo_emd, emo_emd) # or emo_emd, per_emd, per_emd
-
-        fused = torch.cat([emo_emd, per_emd], dim=-1)
-        emotion_logits = self.emotion_personality_fc_out(fused.mean(dim=1))
-        personality_scores = self.personality_emotion_fc_out(fused.mean(dim=1))
-
-        personality_scores = self.activation(personality_scores) if activation else personality_scores
-
-        if return_features:
-            return {
-                'emotion_logits': emotion_logits,
-                'personality_scores': personality_scores,
-                'last_emo_encoder_features': emo_emd,
-                'last_per_encoder_features': per_emd,
-            }
-        else:
-            return {'emotion_logits': emotion_logits,
-                    'personality_scores': personality_scores}
+        return {'emotion_logits': emo_final, "personality_scores": pkl_final}

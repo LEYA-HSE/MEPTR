@@ -17,7 +17,8 @@ from modalities.video.feature_extractor import PretrainedImageEmbeddingExtractor
 from modalities.audio.feature_extractor import PretrainedAudioEmbeddingExtractor
 from modalities.text.feature_extractor import PretrainedTextEmbeddingExtractor
 
-from training.train import train as supra_train
+from training.train import train
+
 def main():
     # ──────────────────── 1. Конфиг и директории ────────────────────
     base_config = ConfigLoader("config.toml")
@@ -136,7 +137,7 @@ def main():
 
     # ──────────────── запускаем supra-modal training ─────────────────────
 
-    supra_train(cfg=base_config,
+    train(cfg=base_config,
                 mm_loader     = union_train_loader,
                 dev_loaders   = dev_loaders,
                 test_loaders  = test_loaders

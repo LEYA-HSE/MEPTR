@@ -9,6 +9,10 @@ class ModalityProjector(nn.Module):
     def __init__(self, in_dim: int, out_dim: int):
         super().__init__()
         self.fc = nn.Linear(in_dim, out_dim)
+        self.fc = nn.Sequential(
+            nn.Linear(in_dim, out_dim),
+            nn.ReLU(),
+        )
 
     def forward(self, x):
         return self.fc(x)
@@ -19,7 +23,7 @@ class SharedEmotionEncoder(nn.Module):
     def __init__(self, input_dim: int, hidden_dim: int = 256):
         super().__init__()
         self.net = nn.Sequential(
-            nn.LayerNorm(input_dim),
+            # nn.LayerNorm(input_dim),
             nn.Linear(input_dim, hidden_dim), nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim), nn.ReLU()
         )
@@ -33,7 +37,7 @@ class ModalityAuxEncoder(nn.Module):
     def __init__(self, input_dim: int, hidden_dim: int = 256):
         super().__init__()
         self.net = nn.Sequential(
-            nn.LayerNorm(input_dim),
+            # nn.LayerNorm(input_dim),
             nn.Linear(input_dim, hidden_dim), nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim), nn.ReLU()
         )

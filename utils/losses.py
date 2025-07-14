@@ -144,7 +144,7 @@ class MAELoss(nn.Module):
 
     def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         return torch.mean(torch.abs(x - y))
-    
+
 class MSELoss(nn.Module):
     """Mean Squared Error loss"""
 
@@ -157,22 +157,22 @@ class MSELoss(nn.Module):
 class CCCLoss(nn.Module):
     """Lin's Concordance Correlation Coefficient: https://en.wikipedia.org/wiki/Concordance_correlation_coefficient
     Measures the agreement between two variables
-    
+
     It is a product of
     - precision (pearson correlation coefficient) and
     - accuracy (closeness to 45 degree line)
-    
+
     Interpretation
     - rho =  1: perfect agreement
     - rho =  0: no agreement
     - rho = -1: perfect disagreement
-    
+
     Args:
         eps (float, optional): Avoiding division by zero. Defaults to 1e-8.
-    
+
     original: https://github.com/DresvyanskiyDenis/ABAW_2024/blob/main/src/audio/loss/loss.py
     """
-    
+
     def __init__(self, eps: float = 1e-8) -> None:
         super().__init__()
         self.eps = eps
@@ -197,7 +197,7 @@ class CCCLoss(nn.Module):
         y_s = torch.std(y)
         ccc = 2 * rho * x_s * y_s / (torch.pow(x_s, 2) + torch.pow(y_s, 2) + torch.pow(x_m - y_m, 2))
         return 1 - ccc
-    
+
 class MultiTaskLoss(nn.Module):
     def __init__(
         self,
@@ -266,5 +266,74 @@ class MultiTaskLoss(nn.Module):
                 # loss += (loss_per / 5.0) * self.weight_personality
             else:
                 loss += self.weight_personality * self.personality_loss(true_personality, pred_personality)
+
+        return loss
+
+
+class MultiTaskLossWithNaN(nn.Module):
+    def __init__(
+        self,
+        weight_emotion=1.0,
+        weight_personality=1.0,
+        emo_weights=None,
+        personality_loss_type="ccc",  # см. ниже список типов
+        eps=1e-8,
+        lam_gl=1.0,
+        eps_gl=600,
+        sigma_gl=8
+    ):
+        super().__init__()
+        self.weight_emotion = weight_emotion
+        self.weight_personality = weight_personality
+
+        # Эмоции — всегда CrossEntropy
+        self.emotion_loss = nn.CrossEntropyLoss(weight=emo_weights)
+
+        # Персональные качества — выбираем по имени
+        loss_types = {
+            "ccc": CCCLoss(eps=eps),
+            "mae": MAELoss(),
+            "mse": MSELoss(),
+            "bell": BellLoss(),
+            "logcosh": LogCosh(),
+            "gl": GL(lam=lam_gl, eps=eps_gl, sigma=sigma_gl),
+            "rmse": RMSE(),
+            "rmse_bell": RMBell(),
+            "rmse_logcosh": RMLCosh(),
+            "rmse_gl": RMGL(lam=lam_gl, eps=eps_gl, sigma=sigma_gl),
+            "rmse_bell_logcosh": RMBellLCosh(),
+            "rmse_bell_gl": RMBellGL(lam=lam_gl, eps=eps_gl, sigma=sigma_gl),
+            "bell_logcosh": BellLCosh(),
+            "bell_gl": BellGL(lam=lam_gl, eps=eps_gl, sigma=sigma_gl),
+            "bell_logcosh_gl": BellLCoshGL(),
+            "logcosh_gl": LogCoshGL(lam=lam_gl, eps=eps_gl, sigma=sigma_gl),
+        }
+
+        if personality_loss_type not in loss_types:
+            raise ValueError(f"Unknown personality_loss_type: {personality_loss_type}. "
+                             f"Available: {list(loss_types.keys())}")
+
+        self.personality_loss = loss_types[personality_loss_type]
+        self.personality_loss_type = personality_loss_type
+
+    def forward(self, outputs, labels):
+        loss = 0.0
+
+        # Эмоции (классификация)
+        true_emotion = labels['emotion'][labels['valid_emo']]
+        pred_emotion = outputs['emotion_logits'][labels['valid_emo']]
+        loss += self.weight_emotion * self.emotion_loss(pred_emotion, true_emotion)
+
+        true_personality = labels['personality'][labels['valid_per']]
+        pred_personality = outputs['personality_scores'][labels['valid_per']]
+
+        if self.personality_loss_type == "ccc":
+            loss_per = 0.0
+            for i in range(5):  # по каждому из 5 признаков
+                loss_per += self.personality_loss(true_personality[:, i], pred_personality[:, i])
+            loss += (loss_per) * self.weight_personality
+            # loss += (loss_per / 5.0) * self.weight_personality
+        else:
+            loss += self.weight_personality * self.personality_loss(true_personality, pred_personality)
 
         return loss

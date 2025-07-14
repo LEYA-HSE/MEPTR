@@ -42,6 +42,19 @@ def similarity_loss(pred_vec: torch.Tensor, guide_vec: torch.Tensor) -> torch.Te
     """
     return F.mse_loss(pred_vec, guide_vec)
 
+def binarize_with_nan(x, threshold=0.5):
+    # Создаем маску NaN
+    nan_mask = torch.isnan(x)
+
+    # Бинаризуем (не затрагивая NaN)
+    binary = torch.zeros_like(x)
+    binary[x >= threshold] = 1.0
+
+    # Восстанавливаем NaN там, где они были
+    binary[nan_mask] = float('nan')
+
+    return binary
+
 
 def cross_modal_triplet_loss(emo_vec: torch.Tensor,
                              class_ids: torch.Tensor,
@@ -129,8 +142,11 @@ def alignment_train_step(model: nn.Module,
     logits_e = torch.cat(logits_lst, dim=0)                     # [M·B, 7]
     modal_ids = torch.cat(modal_ids, dim=0)                     # [M·B]
 
+    # print(y_emo)
+
     # повторяем метки столько раз, сколько модальностей
     y_emo_rep = torch.cat([y_emo] * len(feats_by_mod), dim=0)   # [M·B, 7]
+    y_emo_rep = binarize_with_nan(y_emo_rep, threshold=0.01)
     valid_mask = ~torch.isnan(y_emo_rep).all(dim=1)
     if not valid_mask.any():
         return 0.0
@@ -140,17 +156,30 @@ def alignment_train_step(model: nn.Module,
     optimizer.zero_grad()
 
     loss_task  = F.binary_cross_entropy_with_logits(
-        logits_e[valid_mask], y_emo_rep[valid_mask])
+        logits_e[valid_mask], y_emo_rep[valid_mask], weight=torch.FloatTensor([ 5.890161, 7.534918,  11.228363,  27.722221,   1.3049748,  5.6189237, 26.639517 ]).to(device))
+    # loss_task  = F.cross_entropy(
+    #     logits_e[valid_mask], y_emo_rep[valid_mask], weight=torch.FloatTensor([ 5.890161, 7.534918,  11.228363,  27.722221,   1.3049748,  5.6189237, 26.639517 ]).to(device))
 
     loss_ortho = orthogonality_loss(z_emo, z_aux)
 
+    # вариант 1
     class_ids  = y_emo_rep.argmax(dim=1)
     loss_contr = cross_modal_triplet_loss(
-        z_emo[valid_mask],
-        class_ids[valid_mask],
-        modal_ids[valid_mask],
-        margin,
-    )
+            z_emo[valid_mask],
+            class_ids[valid_mask],
+            modal_ids[valid_mask],
+            margin,
+        )
+
+    # # вариант 2
+    # loss_contr = 0.0
+    # for class_id in range(7):
+    #     loss_contr += cross_modal_triplet_loss(
+    #         z_emo[valid_mask],
+    #         y_emo_rep[:, class_id][valid_mask],
+    #         modal_ids[valid_mask],
+    #         margin,
+    #     )
 
     total_loss = loss_task + beta_ortho * loss_ortho + beta_contr * loss_contr
     total_loss.backward()
@@ -203,7 +232,7 @@ def build_guidance_set(model: nn.Module,
             # ---------- EMOTION ----------
             probs = torch.softmax(logits_e, dim=1)
             for cls in range(7):
-                mask = (~torch.isnan(y_e[:, cls])) & (y_e[:, cls] > 0.5)
+                mask = (~torch.isnan(y_e[:, cls])) & (y_e[:, cls] > 0)
                 if mask.any():
                     k = _k_from_ratio(mask.sum().item())
                     top = probs[mask, cls].topk(k).indices
@@ -284,8 +313,10 @@ def concept_guided_train_step(
     # ---------- Emotion ----------
     if valid_e.any():
         task_loss += F.binary_cross_entropy_with_logits(            # ◄─ task
-            logits_e[valid_e], y_e[valid_e])
-        y_bin = (y_e[valid_e] > 0.5).int()
+            logits_e[valid_e], binarize_with_nan(y_e, threshold=0.01)[valid_e], weight=torch.FloatTensor([ 5.890161, 7.534918,  11.228363,  27.722221,   1.3049748,  5.6189237, 26.639517 ]).to(device))
+        # task_loss += F.cross_entropy(
+        # logits_e[logits_e], y_e[valid_e], weight=torch.FloatTensor([ 5.890161, 7.534918,  11.228363,  27.722221,   1.3049748,  5.6189237, 26.639517 ]).to(device))
+        y_bin = (y_e[valid_e] > 0).int()
         for cls in range(7):
             idx = (y_bin[:, cls] == 1).nonzero(as_tuple=True)[0]
             if idx.numel():
