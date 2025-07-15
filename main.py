@@ -137,62 +137,55 @@ def main():
 
     # ──────────────── запускаем supra-modal training ─────────────────────
 
-    train(cfg=base_config,
-                mm_loader     = union_train_loader,
-                dev_loaders   = dev_loaders,
-                test_loaders  = test_loaders
-            )
+    # train(cfg=base_config,
+    #             mm_loader     = union_train_loader,
+    #             dev_loaders   = dev_loaders,
+    #             test_loaders  = test_loaders
+    #         )
 
-    # # ──────────────────── 6. Поиск гиперпараметров / одиночный run ──
-    # search_config  = toml.load("search_params.toml")
-    # param_grid     = dict(search_config["grid"])
-    # default_values = dict(search_config["defaults"])
+    # ──────────────────── 6. Поиск гиперпараметров / одиночный run ──
+    search_config = toml.load("search_params.toml")
+    param_grid = dict(search_config["grid"])
+    default_values = dict(search_config["defaults"])
 
-    # if base_config.search_type == "greedy":
-    #     greedy_search(
-    #         base_config       = base_config,
-    #         train_loader      = train_loaders,
-    #         dev_loader        = dev_loaders,
-    #         test_loader       = test_loaders,
-    #         train_fn          = train_once,
-    #         overrides_file    = overrides_file,
-    #         param_grid        = param_grid,
-    #         default_values    = default_values,
-    #         csv_prefix        = csv_prefix,
-    #         model_stage       = base_config.model_stage
-    #     )
+    if base_config.search_type == "greedy":
+        greedy_search(
+            base_config    = base_config,
+            train_loader   = union_train_loader,
+            dev_loader     = dev_loaders,
+            test_loader    = test_loaders,
+            train_fn       = train,
+            overrides_file = overrides_file,
+            param_grid     = param_grid,
+            default_values = default_values,
+        )
 
-    # elif base_config.search_type == "exhaustive":
-    #     exhaustive_search(
-    #         base_config       = base_config,
-    #         train_loader      = train_loaders,
-    #         dev_loader        = dev_loaders,
-    #         test_loader       = test_loaders,
-    #         train_fn          = train_once,
-    #         overrides_file    = overrides_file,
-    #         param_grid        = param_grid,
-    #         csv_prefix        = csv_prefix,
-    #         model_stage       = base_config.model_stage
+    elif base_config.search_type == "exhaustive":
+        exhaustive_search(
+            base_config    = base_config,
+            train_loader   = union_train_loader,
+            dev_loader     = dev_loaders,
+            test_loader    = test_loaders,
+            train_fn       = train,
+            overrides_file = overrides_file,
+            param_grid     = param_grid,
+        )
 
-    #     )
+    elif base_config.search_type == "none":
+        logging.info("== Режим одиночной тренировки (без поиска параметров) ==")
 
-    # elif base_config.search_type == "none":
-    #     logging.info("== Режим одиночной тренировки (без поиска параметров) ==")
+        train(
+            config           = base_config,
+            train_loader     = union_train_loader,
+            dev_loaders      = dev_loaders,
+            test_loaders     = test_loaders,
+        )
 
-    #     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    #     csv_file_path = f"{csv_prefix}_single_{timestamp}.csv"
-
-    #     train_once(
-    #         config           = base_config,
-    #         train_loader     = train_loaders,
-    #         dev_loaders      = dev_loaders,
-    #         test_loaders     = test_loaders,
-    #         metrics_csv_path = csv_file_path,
-    #         model_stage      = base_config.model_stage
-    #     )
-
-    # else:
-    #     raise ValueError(f"⛔️ Неверное значение search_type в конфиге: '{base_config.search_type}'. Используй 'greedy', 'exhaustive' или 'none'.")
+    else:
+        raise ValueError(
+            f"⛔️ Неверное значение search_type в конфиге: '{base_config.search_type}'. "
+            f"Используй 'greedy', 'exhaustive' или 'none'."
+        )
 
 
 if __name__ == "__main__":
