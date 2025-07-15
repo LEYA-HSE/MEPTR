@@ -61,6 +61,134 @@ class GraphAttentionLayer(nn.Module):
         h_prime = torch.matmul(attention, Wh)  # [B, N, D']
         return h_prime
 
+class MultiModalFusionModelWithAblation(nn.Module):
+    def __init__(self, hidden_dim=512, num_heads=8, emo_out_dim=7, pkl_out_dim=5, device='cpu', ablation_config=None):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.device = device
+
+        # Настройка для абляции
+        self.ablation_config = ablation_config or {}
+        self.disabled_modalities = set(self.ablation_config.get("disabled_modalities", []))
+        self.disable_graph_attn = self.ablation_config.get("disable_graph_attn", False)
+        self.disable_cross_attn = self.ablation_config.get("disable_cross_attn", False)
+        self.disable_emo_logit_proj = self.ablation_config.get("disable_emo_logit_proj", False)
+        self.disable_pkl_logit_proj = self.ablation_config.get("disable_pkl_logit_proj", False)
+        self.disable_guide_bank = self.ablation_config.get("disable_guide_bank", False)
+
+        self.modalities = {
+            'body': 1024 * 2,
+            'face': 512 * 2,
+            'scene': 768 * 2,
+            'audio': 256 * 2,
+            'text': 256 * 2,
+        }
+
+        self.projectors = nn.ModuleDict({
+            mod: nn.Sequential(
+                ModalityProjector(in_dim, hidden_dim),
+                AdapterFusion(hidden_dim)
+            )
+            for mod, in_dim in self.modalities.items()
+        })
+
+        if not self.disable_graph_attn:
+            self.graph_attn = GraphAttentionLayer(hidden_dim)
+
+        self.emo_query = nn.Parameter(torch.randn(1, 1, hidden_dim))
+        self.pkl_query = nn.Parameter(torch.randn(1, 1, hidden_dim))
+
+        if not self.disable_cross_attn:
+            self.cross_attn = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=num_heads, batch_first=True)
+
+        self.emo_head = nn.Linear(hidden_dim, emo_out_dim)
+        self.pkl_head = nn.Linear(hidden_dim, pkl_out_dim)
+
+        # self.emo_fusion = nn.Linear(2, 1)
+        # self.pkl_fusion = nn.Linear(2, 1)
+
+        if not self.disable_guide_bank:
+            self.guide_bank_emo = GuideBank(emo_out_dim, hidden_dim)
+            self.guide_bank_pkl = GuideBank(pkl_out_dim, hidden_dim)
+
+        if not self.disable_emo_logit_proj:
+            self.emo_logit_proj = nn.Linear(emo_out_dim, hidden_dim)
+        if not self.disable_pkl_logit_proj:
+            self.per_logit_proj = nn.Linear(pkl_out_dim, hidden_dim)
+
+    def forward(self, batch):
+        x_mods = []
+        valid_modalities = []
+
+        for mod, feat in batch['features'].items():
+            if feat is not None and mod in self.projectors and mod not in self.disabled_modalities:
+                x_proj = self.projectors[mod](feat.to(self.device))  # [D]
+                x_mods.append(x_proj)
+                valid_modalities.append(mod)
+
+        if not x_mods:
+            raise ValueError("No valid modality features found")
+
+        x_mods = torch.stack(x_mods, dim=1)  # [B=1, N, D]
+        B, N, D = x_mods.size()
+
+        if self.disable_graph_attn:
+            context = x_mods
+        else:
+            adj = torch.ones(B, N, N, device=self.device)
+            context = self.graph_attn(x_mods, adj)  # [B, N, D]
+
+        emo_q = self.emo_query.expand(B, 1, -1)  # [B, 1, D]
+        pkl_q = self.pkl_query.expand(B, 1, -1)  # [B, 1, D]
+
+        if self.disable_cross_attn:
+            emo_repr = context.mean(dim=1)
+            pkl_repr = context.mean(dim=1)
+        else:
+            emo_repr, _ = self.cross_attn(emo_q, context, context)
+            pkl_repr, _ = self.cross_attn(pkl_q, context, context)
+            emo_repr = emo_repr.squeeze(1)
+            pkl_repr = pkl_repr.squeeze(1)
+
+        emo_logit_feats = []
+        per_logit_feats = []
+        for mod in valid_modalities:
+            emo_logit_feats.append(batch['emotion_logits'][mod].to(self.device))
+            per_logit_feats.append(batch['personality_scores'][mod].to(self.device))
+
+        if emo_logit_feats and not self.disable_emo_logit_proj:
+            emo_repr += self.emo_logit_proj(torch.stack(emo_logit_feats).mean(dim=0))
+        if per_logit_feats and not self.disable_pkl_logit_proj:
+            pkl_repr += self.per_logit_proj(torch.stack(per_logit_feats).mean(dim=0))
+
+        emo_pred = self.emo_head(emo_repr)
+        pkl_pred = torch.sigmoid(self.pkl_head(pkl_repr))
+
+        if not self.disable_guide_bank:
+            if not self.ablation_config.get("disable_guide_emo", False):
+                guides_emo = self.guide_bank_emo()  # [emo_out_dim, D]
+                emo_sim = F.cosine_similarity(emo_repr.unsqueeze(1), guides_emo.unsqueeze(0), dim=-1)
+                # emo_stack = torch.stack([emo_pred, emo_sim], dim=-1)  # [B, C, 2]
+                # emo_final = self.emo_fusion(emo_stack).squeeze(-1)    # [B, C]
+                emo_final = (emo_pred + emo_sim) / 2
+            else:
+                emo_final = emo_pred
+
+            if not self.ablation_config.get("disable_guide_pkl", False):
+                guides_pkl = self.guide_bank_pkl()  # [pkl_out_dim, D]
+                pkl_sim = F.cosine_similarity(pkl_repr.unsqueeze(1), guides_pkl.unsqueeze(0), dim=-1)
+                # pkl_stack = torch.stack([pkl_pred, torch.sigmoid(pkl_sim)], dim=-1)
+                # pkl_final = self.pkl_fusion(pkl_stack).squeeze(-1)
+                pkl_final = (pkl_pred + torch.sigmoid(pkl_sim)) / 2
+            else:
+                pkl_final = pkl_pred
+        else:
+            emo_final = emo_pred
+            pkl_final = pkl_pred
+
+        return {'emotion_logits': emo_final, "personality_scores": pkl_final}
+
+
 class MultiModalFusionModel(nn.Module):
     def __init__(self, hidden_dim=512, num_heads=8, emo_out_dim=7, pkl_out_dim=5, device='cpu'):
         super().__init__()

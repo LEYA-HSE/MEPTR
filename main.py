@@ -6,6 +6,7 @@ import datetime
 import toml
 # os.environ["HF_HOME"] = "models"
 from torch.utils.data import ConcatDataset, DataLoader
+from tqdm import tqdm
 
 from utils.config_loader import ConfigLoader
 from utils.logger_setup import setup_logger
@@ -45,9 +46,16 @@ def main():
 
 
     # ──────────────────── 3. Процессоры + экстракторы ────────────────
-    image_feature_extractor = PretrainedImageEmbeddingExtractor( device=base_config.device)
+    logging.info("🔧 Инициализация модальностей...")
+
+    image_feature_extractor = PretrainedImageEmbeddingExtractor(device=base_config.device)
+    logging.info("🖼️ Image extractor инициализирован")
+
     audio_feature_extractor = PretrainedAudioEmbeddingExtractor(device=base_config.device)
+    logging.info("🔊 Audio extractor инициализирован")
+
     text_feature_extractor = PretrainedTextEmbeddingExtractor(device=base_config.device)
+    logging.info("📄 Text extractor инициализирован")
 
     modality_processors = {
         "body": image_feature_extractor.processor,
@@ -68,7 +76,9 @@ def main():
     # ──────────────────── 4. Даталоадеры ────────────────────────────
     train_loaders, dev_loaders, test_loaders = {}, {}, {}
 
-    for dataset_name in base_config.datasets:
+    for dataset_name in tqdm(base_config.datasets, desc="Dataloaders", leave=False):
+        logging.info(f"📦 Загружается датасет: {dataset_name}")
+
         # train
         _, train_loader = make_dataset_and_loader(
             base_config, "train",
@@ -113,7 +123,6 @@ def main():
         logging.info("== Режим prepare_only: только подготовка данных, без обучения ==")
         return
 
-    # ──────────────────── 6. Запуск supra-modal multitask train ───────────────────
     train_datasets = []
     for ds_name in base_config.datasets:
         ds, loader = make_dataset_and_loader(
@@ -175,8 +184,8 @@ def main():
         logging.info("== Режим одиночной тренировки (без поиска параметров) ==")
 
         train(
-            config           = base_config,
-            train_loader     = union_train_loader,
+            cfg              = base_config,
+            mm_loader        = union_train_loader,
             dev_loaders      = dev_loaders,
             test_loaders     = test_loaders,
         )

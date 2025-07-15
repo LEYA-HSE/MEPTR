@@ -269,6 +269,19 @@ class MultiTaskLoss(nn.Module):
 
         return loss
 
+def binarize_with_nan(x, threshold=0.5):
+    # Создаем маску NaN
+    nan_mask = torch.isnan(x)
+
+    # Бинаризуем (не затрагивая NaN)
+    binary = torch.zeros_like(x)
+    binary[x > threshold] = 1.0
+
+    # Восстанавливаем NaN там, где они были
+    binary[nan_mask] = float('nan')
+
+    return binary
+
 
 class MultiTaskLossWithNaN(nn.Module):
     def __init__(
@@ -277,6 +290,7 @@ class MultiTaskLossWithNaN(nn.Module):
         weight_personality=1.0,
         emo_weights=None,
         personality_loss_type="ccc",  # см. ниже список типов
+        emotion_loss_type='BCE',
         eps=1e-8,
         lam_gl=1.0,
         eps_gl=600,
@@ -287,7 +301,12 @@ class MultiTaskLossWithNaN(nn.Module):
         self.weight_personality = weight_personality
 
         # Эмоции — всегда CrossEntropy
-        self.emotion_loss = nn.CrossEntropyLoss(weight=emo_weights)
+        if emotion_loss_type == 'CE':
+            self.emotion_loss = nn.CrossEntropyLoss(weight=emo_weights)
+            self.emotion_loss_type = emotion_loss_type
+        if emotion_loss_type == 'BCE':
+            self.emotion_loss = nn.BCEWithLogitsLoss(weight=emo_weights)
+            self.emotion_loss_type = emotion_loss_type
 
         # Персональные качества — выбираем по имени
         loss_types = {
@@ -322,6 +341,8 @@ class MultiTaskLossWithNaN(nn.Module):
         # Эмоции (классификация)
         true_emotion = labels['emotion'][labels['valid_emo']]
         pred_emotion = outputs['emotion_logits'][labels['valid_emo']]
+        if self.emotion_loss_type == 'BCE':
+            true_emotion = binarize_with_nan(true_emotion, threshold=0)
         loss += self.weight_emotion * self.emotion_loss(pred_emotion, true_emotion)
 
         true_personality = labels['personality'][labels['valid_per']]

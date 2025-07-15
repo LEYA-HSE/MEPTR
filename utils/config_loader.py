@@ -75,6 +75,7 @@ class ConfigLoader:
         # Тренировка: параметры модели
         # ---------------------------
         train_model = self.config.get("train", {}).get("model", {})
+        self.id_ablation_type = train_model.get("id_ablation_type", 0)
         self.model_name = train_model.get("model_name", "BiFormer")
         self.model_stage = train_model.get("model_stage", "emotion")
         self.path_to_saved_emotion_model = train_model.get("path_to_saved_emotion_model", None)
@@ -83,6 +84,7 @@ class ConfigLoader:
         self.weight_emotion = train_model.get("weight_emotion", 0.1)
         self.weight_pers = train_model.get("weight_pers", 1)
         self.pers_loss_type = train_model.get("pers_loss_type", True)
+        self.emotion_loss_type = train_model.get("emotion_loss_type", True)
         self.flag_emo_weight = train_model.get("flag_emo_weight", "ccc")
         self.hidden_dim = train_model.get("hidden_dim", 256)
         self.hidden_dim_gated = train_model.get("hidden_dim_gated", 256)

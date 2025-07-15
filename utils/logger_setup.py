@@ -45,3 +45,25 @@ def setup_logger(level=logging.INFO, log_file=None):
 
     logger.setLevel(level)
     return logger
+
+def color_metric(metric_name, value):
+    COLORS = {
+        "mF1": "\033[96m",       # светло-серый (нейтрально, базовая эмоц. метрика)
+        "mUAR": "\033[36m",      # бирюзовый / голубой (акустическая нейтральность)
+        "ACC": "\033[32m",       # зелёный (интерпретируемо как «норм»)
+        "CCC": "\033[33m",       # жёлтый (слегка тревожный — континуальный выход)
+        "mean_emo": "\033[1;34m",# жирно-синий (важная агрегированная)
+        "mean_pkl": "\033[1;35m" # жирно-фиолетовый (вторая агрегированная)
+    }
+    END = "\033[0m"
+    color = COLORS.get(metric_name, "")
+    return f"{color}{metric_name}:{value:.4f}{END}"
+
+def color_split(name: str) -> str:
+    SPLIT_COLORS = {
+        "TRAIN": "\033[1;33m",  # ярко-жёлтый
+        "Dev":   "\033[1;31m",  # ярко-синий
+        "Test":  "\033[1;35m",  # ярко-фиолетовый
+    }
+    END = "\033[0m"
+    return f"{SPLIT_COLORS.get(name, '')}{name}{END}"

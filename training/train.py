@@ -11,9 +11,10 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from utils.logger_setup import color_metric, color_split
 from utils.measures import mf1, uar, acc_func, ccc
 from utils.losses import MultiTaskLossWithNaN
-from models.models import MultiModalFusionModel
+from models.models import MultiModalFusionModel, MultiModalFusionModelWithAblation
 
 
 # ─────────────────────────────── utils ────────────────────────────────
@@ -23,24 +24,6 @@ def seed_everything(seed: int = 42):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-
-
-def first_non_none_feature(batch, modality):
-    """
-    Возвращает Tensor([B,D]) для `modality`, если в батче он не None,
-    иначе – None.
-    """
-    feat = batch["features"].get(modality)
-    return feat if feat is not None else None
-
-
-def move_labels_to_device(lbls: Dict[str, torch.Tensor | None],
-                          device: torch.device):
-    """
-    Переносим только те метки, что не None.
-    """
-    return {k: (v.to(device) if v is not None else None)
-            for k, v in lbls.items()}
 
 def transform_matrix(matrix):
     threshold1 = 1 - 1/7
@@ -63,131 +46,80 @@ def process_predictions(pred_emo, true_emo):
 @torch.no_grad()
 def evaluate_epoch(model: torch.nn.Module,
                    loader: DataLoader,
-                   device   : torch.device) -> Dict[str, float]:
-    """
-    Прогоняет loader, собирает метрики.
-    Возврат: dict {metric: value}
-    """
+                   device: torch.device) -> Dict[str, float]:
+    """Собирает метрики на всём лоадере."""
     model.eval()
-
     emo_preds, emo_tgts = [], []
     pkl_preds, pkl_tgts = [], []
 
-    for batch in loader:
-        out   = model(batch)
+    for batch in tqdm(loader, desc="Eval", leave=False):
+        out = model(batch)
 
         # Emotion
-        logits_e = out["emotion_logits"]          # [B,7]  (на GPU)
-        y_e      = batch["labels"]["emotion"]     # [B,7]  (на CPU/Nan)
-
+        logits_e = out["emotion_logits"]
+        y_e = batch["labels"]["emotion"]
         valid_e = ~torch.isnan(y_e).all(dim=1)
         if valid_e.any():
-            y_pred_proc, y_true_proc = process_predictions(
-                logits_e[valid_e],          # raw logits
-                y_e     [valid_e]           # ground-truth one-hot (NaN-free)
-            )
-            emo_preds.extend(y_pred_proc)
-            emo_tgts .extend(y_true_proc)
+            p, t = process_predictions(logits_e[valid_e], y_e[valid_e])
+            emo_preds.extend(p)
+            emo_tgts.extend(t)
 
-        # personality
+        # Personality
         preds_p = out["personality_scores"].cpu()
-        y_p     = batch["labels"]["personality"]
+        y_p = batch["labels"]["personality"]
         valid_p = ~torch.isnan(y_p).all(dim=1)
         if valid_p.any():
             pkl_preds.append(preds_p[valid_p].numpy())
-            pkl_tgts .append(y_p   [valid_p].numpy())
+            pkl_tgts.append(y_p[valid_p].numpy())
 
-    # --- агрегация ---
-    metrics = {}
+    metrics: dict[str, float] = {}
     if emo_tgts:
-        tgt = np.asarray(emo_tgts); prd = np.asarray(emo_preds)
-        metrics["mF1"]  = mf1(tgt, prd)
+        tgt, prd = np.asarray(emo_tgts), np.asarray(emo_preds)
+        metrics["mF1"] = mf1(tgt, prd)
         metrics["mUAR"] = uar(tgt, prd)
     if pkl_tgts:
-        tgt = np.vstack(pkl_tgts); prd = np.vstack(pkl_preds)
+        tgt, prd = np.vstack(pkl_tgts), np.vstack(pkl_preds)
         metrics["ACC"] = acc_func(tgt, prd)
         metrics["CCC"] = ccc(tgt, prd)
-
     return metrics
 
-def _log_dev_and_stop(model, dev_loaders, test_loaders, device,
-                      cur_epoch, total_epochs,
-                      best_vals: dict[str, float],
-                      patience_counter: int,
-                      patience: int,
-                      cfg):
+
+def log_and_aggregate_split(name: str,
+                            loaders: dict[str, DataLoader],
+                            model: torch.nn.Module,
+                            device: torch.device) -> dict[str, float]:
     """
-    Возвращает tuple (patience_counter, stop_training_bool).
-    best_vals – {"emo": ..., "pkl": ...}
+    Универсальная функция логирования и подсчёта агрегатов для dev/test.
     """
+    logging.info(f"—— {name} metrics ——")
+    all_metrics: dict[str, float] = {}
 
-    dev_emo_avgs, dev_pkl_avgs = [], []
-    logging.info("\n—— Dev metrics ——")
-    for ds_name, dev_loader in dev_loaders.items():
-        m = evaluate_epoch(model, dev_loader, device)
+    for ds_name, loader in loaders.items():
+        m = evaluate_epoch(model, loader, device)
+        all_metrics.update({f"{k}_{ds_name}": v for k, v in m.items()})
+        # msg = " · ".join(f"{k}:{v:.4f}" for k, v in m.items())
+        msg = " · ".join(color_metric(k, v) for k, v in m.items())
+        logging.info(f"[{color_split(name)}:{ds_name}] {msg}")
 
-        # emotion average
-        emo_avg = ((m["mF1"] + m["mUAR"]) / 2) if {"mF1", "mUAR"} <= m.keys() else None
-        if emo_avg is not None:
-            dev_emo_avgs.append(emo_avg)
+    mf1s = [v for k, v in all_metrics.items() if k.startswith("mF1_")]
+    uars = [v for k, v in all_metrics.items() if k.startswith("mUAR_")]
+    accs = [v for k, v in all_metrics.items() if k.startswith("ACC_")]
+    cccs = [v for k, v in all_metrics.items() if k.startswith("CCC_")]
 
-        # personality average
-        pkl_avg = ((m["ACC"] + m["CCC"]) / 2) if {"ACC", "CCC"} <= m.keys() else None
-        if pkl_avg is not None:
-            dev_pkl_avgs.append(pkl_avg)
+    if mf1s and uars:
+        all_metrics["mean_emo"] = float(np.mean(mf1s + uars))
+    if accs and cccs:
+        all_metrics["mean_pkl"] = float(np.mean(accs + cccs))
 
-        msg = " · ".join(f"{k}:{v:.4f}" for k, v in m.items())
-        logging.info(
-                    f"[Dev:{ds_name}] {msg}"
-                    + (f" · emo_avg:{emo_avg:.4f}" if emo_avg is not None else "")
-                    + (f" · pkl_avg:{pkl_avg:.4f}" if pkl_avg is not None else "")
-                )
+    if "mean_emo" in all_metrics or "mean_pkl" in all_metrics:
+        summary_parts = []
+        if "mean_emo" in all_metrics:
+            summary_parts.append(color_metric("mean_emo", all_metrics["mean_emo"]))
+        if "mean_pkl" in all_metrics:
+            summary_parts.append(color_metric("mean_pkl", all_metrics["mean_pkl"]))
+        logging.info(f"{name} Summary | " + " ".join(summary_parts))
 
-    mean_emo = float(np.mean(dev_emo_avgs)) if dev_emo_avgs else None
-    mean_pkl = float(np.mean(dev_pkl_avgs)) if dev_pkl_avgs else None
-    logging.info(
-                "Mean Dev | " + (f"emo_avg={mean_emo:.4f} " if mean_emo is not None else "")
-                + (f"pkl_avg={mean_pkl:.4f}" if mean_pkl is not None else "")
-            )
-
-    improved_emo = (mean_emo is not None) and (mean_emo > best_vals["emo"])
-    improved_pkl = (mean_pkl is not None) and (mean_pkl > best_vals["pkl"])
-
-    if improved_emo or improved_pkl:
-        if improved_emo:
-            best_vals["emo"] = mean_emo
-        if improved_pkl:
-            best_vals["pkl"] = mean_pkl
-        patience_counter = 0
-
-        os.makedirs(cfg.checkpoint_dir, exist_ok=True)
-        ckpt_path = Path(cfg.checkpoint_dir) / (
-            f"best_ep{cur_epoch + 1}"
-            f"_emo{mean_emo:.4f}_pkl{mean_pkl:.4f}.pt"
-        )
-
-        torch.save(model.state_dict(), ckpt_path)
-        logging.info(f"✔ Best model saved: {ckpt_path.name}")
-    else:
-        patience_counter += 1
-        missed = []
-        if not improved_emo: missed.append("emotion")
-        if not improved_pkl: missed.append("pkl")
-        logging.warning(f"No improvement in {', '.join(missed)} — "
-                        f"patience {patience_counter}/{patience}")
-        if patience_counter >= patience:
-            logging.info(f"Early stopping at epoch {cur_epoch + 1}/{total_epochs}")
-            return patience_counter, True  # stop training
-
-    # — Test —
-    if test_loaders:
-        logging.info("\n—— Test metrics ——")
-        for ds_name, test_loader in test_loaders.items():
-            m = evaluate_epoch(model, test_loader, device)
-            msg = " · ".join(f"{k}:{v:.4f}" for k, v in m.items())
-            logging.info(f"  🏁 Test[{ds_name}] | {msg}")
-
-    return patience_counter, False
+    return all_metrics
 
 # ────────────────────────── основной train() ──────────────────────────
 def train(cfg,
@@ -204,42 +136,35 @@ def train(cfg,
     seed_everything(cfg.random_seed)
     device = cfg.device
 
-    # early-stopping state
-    best_vals = {"emo": -float("inf"), "pkl": -float("inf")}
-    patience_counter = 0
-
-    # ── 0. Живые модальности ──────────────────────────────────────────
-    input_dims: Dict[str, int] = {}
-    for batch in mm_loader:
-        for mod, feat in batch["features"].items():
-            if feat is not None and mod not in input_dims:
-                input_dims[mod] = feat.shape[1]
-        if input_dims:
-            break
-    if not input_dims:
-        raise RuntimeError("Ни в одном примере не найдено ни одной модальности")
-
-    # ── 1. Модель и оптимизатор ───────────────────────────────────────
-    model = MultiModalFusionModel(
+    # ── 0. Модель и оптимизатор ───────────────────────────────────────
+    model = MultiModalFusionModelWithAblation(
         hidden_dim=cfg.hidden_dim,
         emo_out_dim=7,
         pkl_out_dim=5,
-        device=device
+        device=device,
+        ablation_config={"disabled_modalities": [], "disable_guide_emo": True}
     ).to(device)
+
     optimizer = torch.optim.AdamW(model.parameters(),
-                                  lr=cfg.lr,
-                                  weight_decay=cfg.weight_decay)
+                                lr=cfg.lr,
+                                weight_decay=cfg.weight_decay)
 
     criterion = MultiTaskLossWithNaN(
         weight_emotion=cfg.weight_emotion,
         weight_personality=cfg.weight_pers,
-        emo_weights=torch.FloatTensor(
-            [5.890161, 7.534918, 11.228363, 27.722221, 1.3049748, 5.6189237, 26.639517]
-        ).to(device),
-        personality_loss_type=cfg.pers_loss_type
+        emo_weights=(torch.FloatTensor(
+            [5.890161, 7.534918, 11.228363, 27.722221,
+             1.3049748, 5.6189237, 26.639517]).to(device)
+                     if cfg.flag_emo_weight else None),
+        personality_loss_type=cfg.pers_loss_type,
+        emotion_loss_type=cfg.emotion_loss_type
     )
 
-    # ── 2. Эпохи ──────────────────────────────────────────────────────
+    best_dev, best_test = {}, {}
+    best_mean_emo = -float("inf")
+    patience_counter = 0
+
+    # ── 1. Эпохи ──────────────────────────────────────────────────────
     for epoch in range(cfg.num_epochs):
         logging.info(f"═══ EPOCH {epoch + 1}/{cfg.num_epochs} ═══")
         model.train()
@@ -286,30 +211,46 @@ def train(cfg,
             total_preds_per.extend(preds_per.cpu().detach().numpy().tolist())
             total_targets_per.extend(targets_per.cpu().detach().numpy().tolist())
 
+        # --- train метрики ---
         train_loss = total_loss / total_samples
-        uar_m = uar(total_targets_emo, total_preds_emo)
-        mf1_m = mf1(total_targets_emo, total_preds_emo)
-        mean_train = np.mean([uar_m, mf1_m])
-
+        mF1_train = mf1(total_targets_emo, total_preds_emo)
+        mUAR_train = uar(total_targets_emo, total_preds_emo)
         logging.info(
-            f"[TRAIN] Loss={train_loss:.4f}, UAR={uar_m:.4f}, "
-            f"MF1={mf1_m:.4f}, MEAN={mean_train:.4f}"
+            f"[{color_split('TRAIN')}] Loss={train_loss:.4f}, "
+            f"UAR={mUAR_train:.4f}, MF1={mF1_train:.4f}, "
+            f"MEAN={np.mean([mUAR_train, mF1_train]):.4f}"
         )
 
-        # — Dev / Test + early-stopping —
-        if dev_loaders:
-            patience_counter, stop = _log_dev_and_stop(
-                model, dev_loaders, test_loaders, device,
-                epoch, cfg.num_epochs,
-                best_vals, patience_counter,
-                cfg.max_patience, cfg
+        # ── Dev evaluation
+        cur_dev = log_and_aggregate_split("Dev", dev_loaders, model, device)
+        mean_emo = cur_dev.get("mean_emo")
+
+        # ── Test evaluation
+        cur_test = log_and_aggregate_split("Test", test_loaders, model, device) if test_loaders else {}
+
+        # ── Early stopping
+        mean_emo = cur_dev.get("mean_emo")
+        mean_pkl = cur_dev.get("mean_pkl", 0.0)  # fallback, если вдруг нет
+
+        improved_emo = (mean_emo is not None) and (mean_emo > best_mean_emo)
+
+        if improved_emo:
+            best_mean_emo = mean_emo
+            best_dev = cur_dev
+            best_test = cur_test
+            patience_counter = 0
+
+            os.makedirs(cfg.checkpoint_dir, exist_ok=True)
+            ckpt_path = Path(cfg.checkpoint_dir) / (
+                f"best_ep{epoch + 1}_emo{mean_emo:.4f}_pkl{mean_pkl:.4f}.pt"
             )
-            if stop:
+            torch.save(model.state_dict(), ckpt_path)
+            logging.info(f"✔ Best model saved: {ckpt_path.name}")
+        else:
+            patience_counter += 1
+            logging.info(f"No improvement — patience {patience_counter}/{cfg.max_patience}")
+            if patience_counter >= cfg.max_patience:
+                logging.info(f"Early stopping at epoch {epoch + 1}")
                 break
 
-    return {
-        "mF1": mf1_m,
-        "mUAR": uar_m,
-        "ACC": acc_func(np.array(total_targets_per), np.array(total_preds_per)),
-        "CCC": ccc(np.array(total_targets_per), np.array(total_preds_per)),
-    }
+    return best_dev, best_test
