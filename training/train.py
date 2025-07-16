@@ -186,7 +186,7 @@ def train(cfg,
     )
 
     best_dev, best_test = {}, {}
-    best_mean_emo = -float("inf")
+    best_mean_combo  = -float("inf")
     patience_counter = 0
 
     # ── 1. Эпохи ──────────────────────────────────────────────────────
@@ -257,12 +257,19 @@ def train(cfg,
         mean_emo = cur_eval.get("mean_emo")
         mean_pkl = cur_eval.get("mean_pkl", 0.0)
 
-        scheduler.step(mean_emo)
 
-        improved_emo = (mean_emo is not None) and (mean_emo > best_mean_emo)
+        if mean_emo is not None and mean_pkl is not None:
+            mean_combo = 0.5 * (mean_emo + mean_pkl)
+        else:
+            mean_combo = mean_emo if mean_emo is not None else mean_pkl  # фоллбэк на одну из метрик
 
-        if improved_emo:
-            best_mean_emo = mean_emo
+        scheduler.step(mean_combo)
+
+        # improved_emo = (mean_emo is not None) and (mean_emo > best_mean_emo)
+        improved_combo = mean_combo > best_mean_combo
+
+        if improved_combo:
+            best_mean_combo  = mean_combo
             best_dev = cur_dev
             best_test = cur_test
             patience_counter = 0
