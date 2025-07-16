@@ -2,6 +2,8 @@
 hidden_dim            = [128, 256, 512]
 num_transformer_heads = [2, 4, 8, 16]
 dropout = [0.15, 0.2]
+lr      = [1e-4, 1e-5]
+
 [defaults]
 hidden_dim = 512
 # mamba_d_state = 6

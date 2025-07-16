@@ -10,7 +10,9 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+from lion_pytorch import Lion
 
+from utils.schedulers import SmartScheduler
 from utils.logger_setup import color_metric, color_split
 from utils.measures import mf1, uar, acc_func, ccc
 from utils.losses import MultiTaskLossWithNaN
@@ -147,10 +149,31 @@ def train(cfg,
         ablation_config={"disabled_modalities": [], "disable_guide_emo": True}
     ).to(device)
 
-    optimizer = torch.optim.Adam(model.parameters(),
-                                lr=cfg.lr,
-                                weight_decay=cfg.weight_decay)
+    if cfg.optimizer == "adam":
+        optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    elif cfg.optimizer == "adamw":
+        optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    elif cfg.optimizer == "lion":
+        optimizer = Lion(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    elif cfg.optimizer == "sgd":
+        optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr, momentum=cfg.momentum)
+    elif cfg.optimizer == "rmsprop":
+        optimizer = torch.optim.RMSprop(model.parameters(), lr=cfg.lr)
+    else:
+        raise ValueError(f"⛔ Неизвестный оптимизатор: {cfg.optimizer}")
 
+    logging.info(f"⚙️ Оптимизатор: {cfg.optimizer}, learning rate: {cfg.lr}")
+
+    # --- Scheduler ---
+    steps_per_epoch = sum(1 for b in mm_loader if b is not None)
+    scheduler = SmartScheduler(
+        scheduler_type=cfg.scheduler_type,
+        optimizer=optimizer,
+        config=cfg,
+        steps_per_epoch=steps_per_epoch
+    )
+
+    # --- Loss ---
     criterion = MultiTaskLossWithNaN(
         weight_emotion=cfg.weight_emotion,
         weight_personality=cfg.weight_pers,
@@ -197,6 +220,8 @@ def train(cfg,
             optimizer.step()
             optimizer.zero_grad()
 
+            scheduler.step(batch_level=True)
+
             bs = emo_labels.shape[0]
             total_loss += loss.item() * bs
             total_samples += bs
@@ -231,6 +256,8 @@ def train(cfg,
 
         mean_emo = cur_eval.get("mean_emo")
         mean_pkl = cur_eval.get("mean_pkl", 0.0)
+
+        scheduler.step(mean_emo)
 
         improved_emo = (mean_emo is not None) and (mean_emo > best_mean_emo)
 
