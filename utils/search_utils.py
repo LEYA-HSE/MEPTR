@@ -26,14 +26,14 @@ def format_result_box_dual(step_num: int,
                            dev_metrics: dict[str, Any],
                            test_metrics: dict[str, Any],
                            is_best: bool = False,
-                           selection_metric: str = "mean_emo") -> str:
+                           selection_metric: str = "mean_emo",
+                           early_stop_on: str = "dev") -> str:
     """Красивый АСКИИ-бокс с метриками dev / test."""
     title = f"Шаг {step_num}: {param_name} = {candidate}"
     fixed_lines = [f"{k} = {v}" for k, v in fixed_params.items()]
 
     def format_metrics_block(metrics: dict[str, Any], label: str) -> list[str]:
         lines = [f"  Результаты ({label.upper()}):"]
-
         ordered = METRIC_ORDER + sorted(set(metrics) - set(METRIC_ORDER))
         for k in ordered:
             if k in metrics:
@@ -41,7 +41,7 @@ def format_result_box_dual(step_num: int,
                 line = (f"    {k.upper():12} = {val:.4f}"
                         if isinstance(val, (int, float)) else
                         f"    {k.upper():12} = {val}")
-                if is_best and label == "dev" and k == selection_metric:
+                if is_best and label == early_stop_on and k == selection_metric:
                     line += " ✅"
                 lines.append(line)
         return lines
@@ -61,6 +61,7 @@ def format_result_box_dual(step_num: int,
         box.append(f"│ {line.ljust(max_width)} │")
     box.append(border_bot)
     return "\n".join(box)
+
 
 # ─────────────────────────── жадный поиск ──────────────────────────────────
 def greedy_search(
@@ -110,7 +111,8 @@ def greedy_search(
                 i + 1, param_name, tried_value,
                 {k: v for k, v in current_best_params.items() if k != param_name},
                 dev_met_def, test_met_def,
-                is_best=True, selection_metric=selection_metric
+                is_best=True, selection_metric=selection_metric,
+                early_stop_on=base_config.early_stop_on
             )
             with open(overrides_file, "a", encoding="utf-8") as f:
                 f.write("\n" + box + "\n")
@@ -137,7 +139,8 @@ def greedy_search(
                 i + 1, param_name, cand,
                 {k: v for k, v in current_best_params.items() if k != param_name},
                 dev_met, test_met,
-                is_best=is_better, selection_metric=selection_metric
+                is_best=is_better, selection_metric=selection_metric,
+                early_stop_on=base_config.early_stop_on
             )
             with open(overrides_file, "a", encoding="utf-8") as f:
                 f.write("\n" + box + "\n")
@@ -210,7 +213,8 @@ def exhaustive_search(
         box = format_result_box_dual(
             combo_id, " + ".join(all_param_names), str(combo),
             {}, dev_met, test_met,
-            is_best=is_better, selection_metric=selection_metric
+            is_best=is_better, selection_metric=selection_metric,
+            early_stop_on=base_config.early_stop_on
         )
         with open(overrides_file, "a", encoding="utf-8") as f:
             f.write("\n" + box + "\n")

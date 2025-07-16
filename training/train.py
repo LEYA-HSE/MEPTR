@@ -139,13 +139,15 @@ def train(cfg,
     # ── 0. Модель и оптимизатор ───────────────────────────────────────
     model = MultiModalFusionModelWithAblation(
         hidden_dim=cfg.hidden_dim,
+        num_heads = cfg.num_transformer_heads,
+        dropout=cfg.dropout,
         emo_out_dim=7,
         pkl_out_dim=5,
         device=device,
         ablation_config={"disabled_modalities": [], "disable_guide_emo": True}
     ).to(device)
 
-    optimizer = torch.optim.AdamW(model.parameters(),
+    optimizer = torch.optim.Adam(model.parameters(),
                                 lr=cfg.lr,
                                 weight_decay=cfg.weight_decay)
 
@@ -221,16 +223,14 @@ def train(cfg,
             f"MEAN={np.mean([mUAR_train, mF1_train]):.4f}"
         )
 
-        # ── Dev evaluation
+        # ── Evaluation ──
         cur_dev = log_and_aggregate_split("Dev", dev_loaders, model, device)
-        mean_emo = cur_dev.get("mean_emo")
-
-        # ── Test evaluation
         cur_test = log_and_aggregate_split("Test", test_loaders, model, device) if test_loaders else {}
 
-        # ── Early stopping
-        mean_emo = cur_dev.get("mean_emo")
-        mean_pkl = cur_dev.get("mean_pkl", 0.0)  # fallback, если вдруг нет
+        cur_eval = cur_dev if cfg.early_stop_on == "dev" else cur_test
+
+        mean_emo = cur_eval.get("mean_emo")
+        mean_pkl = cur_eval.get("mean_pkl", 0.0)
 
         improved_emo = (mean_emo is not None) and (mean_emo > best_mean_emo)
 
@@ -248,7 +248,7 @@ def train(cfg,
             logging.info(f"✔ Best model saved: {ckpt_path.name}")
         else:
             patience_counter += 1
-            logging.info(f"No improvement — patience {patience_counter}/{cfg.max_patience}")
+            logging.warning(f"No improvement — patience {patience_counter}/{cfg.max_patience}")
             if patience_counter >= cfg.max_patience:
                 logging.info(f"Early stopping at epoch {epoch + 1}")
                 break

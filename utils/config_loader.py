@@ -63,7 +63,7 @@ class ConfigLoader:
         self.search_type = train_general.get("search_type", "none")
         self.smoothing_probability = train_general.get("smoothing_probability", 0)
         self.path_to_df_ls = train_general.get("path_to_df_ls", None)
-        self.opt_set = train_general.get("opt_set", "dev")
+        self.early_stop_on = train_general.get("early_stop_on", "dev")
         self.lambda_emotion = train_general.get("lambda_emotion", 1)
         self.lambda_personality = train_general.get("lambda_personality", 5)
         self.lambda_domain = train_general.get("lambda_domain", 0.1)

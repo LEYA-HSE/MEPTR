@@ -3,22 +3,24 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class ModalityProjector(nn.Module):
-    def __init__(self, in_dim, out_dim):
+    def __init__(self, in_dim, out_dim, dropout=0.1):
         super().__init__()
         self.proj = nn.Sequential(
             nn.Linear(in_dim, out_dim),
             nn.ReLU(),
+            nn.Dropout(dropout),
             nn.LayerNorm(out_dim)
         )
     def forward(self, x):
         return self.proj(x)
 
 class AdapterFusion(nn.Module):
-    def __init__(self, hidden_dim):
+    def __init__(self, hidden_dim, dropout=0.1):
         super().__init__()
         self.adapter = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.ReLU(),
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim // 2, hidden_dim)
         )
         self.layernorm = nn.LayerNorm(hidden_dim)
@@ -62,9 +64,12 @@ class GraphAttentionLayer(nn.Module):
         return h_prime
 
 class MultiModalFusionModelWithAblation(nn.Module):
-    def __init__(self, hidden_dim=512, num_heads=8, emo_out_dim=7, pkl_out_dim=5, device='cpu', ablation_config=None):
+    def __init__(self, hidden_dim=512, num_heads=8, dropout=0.1,
+                 emo_out_dim=7, pkl_out_dim=5, device='cpu', ablation_config=None):
         super().__init__()
         self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.dropout = dropout
         self.device = device
 
         # Настройка для абляции
@@ -86,20 +91,20 @@ class MultiModalFusionModelWithAblation(nn.Module):
 
         self.projectors = nn.ModuleDict({
             mod: nn.Sequential(
-                ModalityProjector(in_dim, hidden_dim),
-                AdapterFusion(hidden_dim)
+                ModalityProjector(in_dim, hidden_dim, dropout),
+                AdapterFusion(hidden_dim, dropout)
             )
             for mod, in_dim in self.modalities.items()
         })
 
         if not self.disable_graph_attn:
-            self.graph_attn = GraphAttentionLayer(hidden_dim)
+            self.graph_attn = GraphAttentionLayer(hidden_dim, dropout=dropout)
 
         self.emo_query = nn.Parameter(torch.randn(1, 1, hidden_dim))
         self.pkl_query = nn.Parameter(torch.randn(1, 1, hidden_dim))
 
         if not self.disable_cross_attn:
-            self.cross_attn = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=num_heads, batch_first=True)
+            self.cross_attn = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=num_heads, dropout=dropout, batch_first=True)
 
         self.emo_head = nn.Linear(hidden_dim, emo_out_dim)
         self.pkl_head = nn.Linear(hidden_dim, pkl_out_dim)
