@@ -1,9 +1,9 @@
 [grid]
-hidden_dim            = [128, 256, 512]
-num_transformer_heads = [2, 4, 8, 16]
+hidden_dim            = [256, 512]
+num_transformer_heads = [2, 4, 8]
 dropout = [0.1, 0.15, 0.2]
 lr      = [1e-4, 1e-5]
-warmup_ratio = [0.05, 0.1]
+
 
 [defaults]
 hidden_dim = 512

@@ -338,23 +338,41 @@ class MultiTaskLossWithNaN(nn.Module):
     def forward(self, outputs, labels):
         loss = 0.0
 
-        # Эмоции (классификация)
-        true_emotion = labels['emotion'][labels['valid_emo']]
-        pred_emotion = outputs['emotion_logits'][labels['valid_emo']]
-        if self.emotion_loss_type == 'BCE':
-            true_emotion = binarize_with_nan(true_emotion, threshold=0)
-        loss += self.weight_emotion * self.emotion_loss(pred_emotion, true_emotion)
+        # Emotion branch
+        emo_mask = labels['valid_emo']
+        if emo_mask.any():
+            true_emotion = labels['emotion'][emo_mask]
+            pred_emotion = outputs['emotion_logits'][emo_mask]
 
-        true_personality = labels['personality'][labels['valid_per']]
-        pred_personality = outputs['personality_scores'][labels['valid_per']]
+            if self.emotion_loss_type == 'BCE':
+                true_emotion = binarize_with_nan(true_emotion, threshold=0)
 
-        if self.personality_loss_type == "ccc":
-            loss_per = 0.0
-            for i in range(5):  # по каждому из 5 признаков
-                loss_per += self.personality_loss(true_personality[:, i], pred_personality[:, i])
-            loss += (loss_per) * self.weight_personality
-            # loss += (loss_per / 5.0) * self.weight_personality
-        else:
-            loss += self.weight_personality * self.personality_loss(true_personality, pred_personality)
+            loss += self.weight_emotion * self.emotion_loss(pred_emotion, true_emotion)
+
+        # Personality branch
+        per_mask = labels['valid_per']
+        if per_mask.any():
+            true_personality = labels['personality'][per_mask]
+            pred_personality = outputs['personality_scores'][per_mask]
+
+            if self.personality_loss_type == "ccc":
+                loss_per = 0.0
+                valid_traits = 0
+                for i in range(5):
+                    trait_mask = ~torch.isnan(true_personality[:, i])
+                    if trait_mask.any():
+                        loss_per += self.personality_loss(
+                            true_personality[trait_mask, i],
+                            pred_personality[trait_mask, i]
+                        )
+                        valid_traits += 1
+
+                if valid_traits > 0:
+                    loss += (loss_per / valid_traits) * self.weight_personality
+            else:
+                loss += self.weight_personality * self.personality_loss(
+                    true_personality,
+                    pred_personality
+                )
 
         return loss

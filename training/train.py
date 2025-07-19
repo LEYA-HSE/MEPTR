@@ -146,7 +146,7 @@ def train(cfg,
         emo_out_dim=7,
         pkl_out_dim=5,
         device=device,
-        ablation_config={"disabled_modalities": [], "disable_guide_emo": True}
+        ablation_config={"disabled_modalities": [], "disable_guide_emo": False, "disable_guide_pkl": True}
     ).to(device)
 
     if cfg.optimizer == "adam":
@@ -262,6 +262,8 @@ def train(cfg,
             mean_combo = 0.5 * (mean_emo + mean_pkl)
         else:
             mean_combo = mean_emo if mean_emo is not None else mean_pkl  # фоллбэк на одну из метрик
+
+        logging.info(f"[{color_split('COMBO')}] mean_emo={mean_emo:.4f}, mean_pkl={mean_pkl:.4f}, combo={mean_combo:.4f}")
 
         scheduler.step(mean_combo)
 
