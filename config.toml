@@ -40,7 +40,7 @@ early_stop_on = "test"  # dev или "test" набор для оптимизац
 checkpoint_dir = "checkpoints"
 device = "cuda"           # "cuda" или "cpu", куда грузить модел
 selection_metric = "mean_combo"   # mean_emo или "mF1", "mUAR", "ACC" … mean_combo
-single_task = true
+single_task = false
 
 
 # ---------------------------

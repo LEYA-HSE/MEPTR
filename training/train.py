@@ -331,8 +331,11 @@ def train(cfg,
 
         # --- train метрики ---
         train_loss = total_loss / total_samples
-        mF1_train = mf1(total_targets_emo, total_preds_emo)
-        mUAR_train = uar(total_targets_emo, total_preds_emo)
+        if total_targets_emo:                 # <-- ДОБАВИТЬ
+            mF1_train = mf1(total_targets_emo, total_preds_emo)
+            mUAR_train = uar(total_targets_emo, total_preds_emo)
+        else:
+            mF1_train = mUAR_train = float('nan')
         logging.info(
             f"[{color_split('TRAIN')}] Loss={train_loss:.4f}, "
             f"UAR={mUAR_train:.4f}, MF1={mF1_train:.4f}, "
@@ -370,9 +373,11 @@ def train(cfg,
             patience_counter = 0
 
             os.makedirs(cfg.checkpoint_dir, exist_ok=True)
-            ckpt_path = Path(cfg.checkpoint_dir) / (
-                f"best_ep{epoch + 1}_emo{mean_emo:.4f}_pkl{mean_pkl:.4f}.pt"
-            )
+            emo_str = f"{mean_emo:.4f}" if mean_emo is not None else "NA"
+            pkl_str = f"{mean_pkl:.4f}" if mean_pkl is not None else "NA"
+
+            ckpt_path = Path(cfg.checkpoint_dir) / f"best_ep{epoch + 1}_emo{emo_str}_pkl{pkl_str}.pt"
+
             torch.save(model.state_dict(), ckpt_path)
             logging.info(f"✔ Best model saved: {ckpt_path.name}")
         else:
