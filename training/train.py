@@ -253,7 +253,7 @@ def train(cfg,
     )
 
     best_dev, best_test = {}, {}
-    best_mean_combo  = -float("inf")
+    best_score  = -float("inf")
     patience_counter = 0
 
     # ── 1. Эпохи ──────────────────────────────────────────────────────
@@ -327,18 +327,23 @@ def train(cfg,
         mean_pkl = cur_eval.get("mean_pkl", 0.0)
 
 
-        if mean_emo is not None and mean_pkl is not None:
-            mean_combo = 0.5 * (mean_emo + mean_pkl)
-        else:
-            mean_combo = mean_emo if mean_emo is not None else mean_pkl  # фоллбэк на одну из метрик
+        # ── выбираем целевую метрику в зависимости от режима ──
+        if cfg.single_task:
+            metric_key = "mean_emo" if target_task == "emo" else "mean_pkl"
+            metric_val = cur_eval.get(metric_key)
+        else:                                           # мульти-таск
+            if mean_emo is not None and mean_pkl is not None:
+                metric_val = 0.5 * (mean_emo + mean_pkl)
+            else:                                       # fallback
+                metric_val = mean_emo if mean_emo is not None else mean_pkl
 
-        scheduler.step(mean_combo)
+        scheduler.step(metric_val)
 
         # improved_emo = (mean_emo is not None) and (mean_emo > best_mean_emo)
-        improved_combo = mean_combo > best_mean_combo
+        improved = metric_val > best_score
 
-        if improved_combo:
-            best_mean_combo  = mean_combo
+        if improved:
+            best_score  = metric_val
             best_dev = cur_dev
             best_test = cur_test
             patience_counter = 0

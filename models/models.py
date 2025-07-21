@@ -219,9 +219,9 @@ class MultiModalFusionModelWithAblation(nn.Module):
         # single-task: глушим лишнюю голову ТОЛЬКО если slice задан
         if self.feature_slice_mode:
             if self.target_task == "emo":
-                pkl_pred = None
+                pkl_final = None          # ← именно final
             elif self.target_task == "pkl":
-                emo_pred = None
+                emo_final = None
 
         return {'emotion_logits': emo_final, "personality_scores": pkl_final}
 
