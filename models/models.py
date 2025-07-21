@@ -97,12 +97,6 @@ class MultiModalFusionModelWithAblation(nn.Module):
         self.disable_pkl_logit_proj = self.ablation_config.get("disable_pkl_logit_proj", False)
         self.disable_guide_bank = self.ablation_config.get("disable_guide_bank", False)
 
-
-        # ── SINGLE-TASK (появляется, только если флаг задан) ──
-        self.feature_slice_mode = ablation_config.get("feature_slice", None)   # None | both|emo|pkl
-        self.target_task = ablation_config.get("target_task", None)
-        self.slice = FeatureSlice(self.feature_slice_mode) if self.feature_slice_mode else None
-
         self.modalities = {
             'body': 1024 * 2,
             'face': 512 * 2,
@@ -149,10 +143,7 @@ class MultiModalFusionModelWithAblation(nn.Module):
 
         for mod, feat in batch['features'].items():
             if feat is not None and mod in self.projectors and mod not in self.disabled_modalities:
-                feat = feat.to(self.device)
-                if self.slice is not None:
-                    feat = self.slice(feat)
-                x_proj = self.projectors[mod](feat)  # [D]
+                x_proj = self.projectors[mod](feat.to(self.device))  # [D]
                 x_mods.append(x_proj)
                 valid_modalities.append(mod)
 
@@ -216,14 +207,98 @@ class MultiModalFusionModelWithAblation(nn.Module):
             emo_final = emo_pred
             pkl_final = pkl_pred
 
-        # single-task: глушим лишнюю голову ТОЛЬКО если slice задан
-        if self.feature_slice_mode:
-            if self.target_task == "emo":
-                pkl_final = None          # ← именно final
-            elif self.target_task == "pkl":
-                emo_final = None
-
         return {'emotion_logits': emo_final, "personality_scores": pkl_final}
+
+# ──────────────────────────────────────────────────────────────
+#              SINGLE-TASK   (эмоции ИЛИ PKL)
+# ──────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────
+#        Тонкая однотасковая модель без мёртвых нулей
+# ─────────────────────────────────────────────────────────
+class SingleTaskSlimModel(nn.Module):
+    """
+    target      : 'emo' | 'pkl'  — какую задачу учим
+    hidden_dim  : размер общего пространства
+    """
+    def __init__(self,
+                 target: str,
+                 hidden_dim: int = 512,
+                 num_heads: int = 8,
+                 dropout: float = .1,
+                 emo_out_dim: int = 7,
+                 pkl_out_dim: int = 5,
+                 device: str = 'cpu'):
+        super().__init__()
+        if target not in ('emo', 'pkl'):
+            raise ValueError("target must be 'emo' or 'pkl'")
+        self.target, self.device = target, device
+
+        # ← БЕЗ ×2: берём ровно тот вектор, который нужен задаче
+        self.modalities = {
+            'body' : 1024,
+            'face' : 512,
+            'scene': 768,
+            'audio': 256,
+            'text' : 256,
+        }
+        self.projectors = nn.ModuleDict({
+            m: nn.Sequential(ModalityProjector(d, hidden_dim, dropout),
+                             AdapterFusion(hidden_dim, dropout))
+            for m, d in self.modalities.items()
+        })
+
+        self.graph_attn = GraphAttentionLayer(hidden_dim, dropout=dropout)
+        self.query      = nn.Parameter(torch.randn(1, 1, hidden_dim))
+        self.cross_attn = nn.MultiheadAttention(hidden_dim, num_heads,
+                                                dropout=dropout, batch_first=True)
+
+        if target == 'emo':
+            self.head  = nn.Linear(hidden_dim,   emo_out_dim)
+            self.guide = GuideBank(emo_out_dim, hidden_dim)
+        else:
+            self.head  = nn.Linear(hidden_dim,   pkl_out_dim)
+            self.guide = GuideBank(pkl_out_dim, hidden_dim)
+
+    # ───────────────── forward ─────────────────
+    def forward(self, batch):
+        # 1) модальные проекции
+        feats = []
+        for m, f in batch["features"].items():
+            if f is None or m not in self.projectors:
+                continue
+
+            # —–– ❶ Честное отсечение половины —––
+            expected_dim = self.modalities[m]          # 1024, 512, …
+            if f.size(-1) == expected_dim * 2:         # пришёл полный [emo‖pkl]
+                half = f.size(-1) // 2
+                f = f[..., :half] if self.target == "emo" else f[..., half:]
+
+            feats.append(self.projectors[m](f.to(self.device)))
+
+        if not feats:
+            raise RuntimeError("No valid modality features")
+
+        x = torch.stack(feats, 1)                      # [B, N, D]
+        B, N, _ = x.size()
+        ctx = self.graph_attn(x, torch.ones(B, N, N, device=self.device))
+
+        # 2) cross-attention
+        q   = self.query.expand(B, 1, -1)
+        rep = self.cross_attn(q, ctx, ctx)[0].squeeze(1)  # [B, D]
+
+        # 3) голова + guide-банк
+        logits = self.head(rep)                          # [B, C]
+        sim    = F.cosine_similarity(rep.unsqueeze(1),
+                                     self.guide().unsqueeze(0), -1)
+
+        if self.target == 'emo':
+            out = (logits + sim) / 2                     # классы raw
+            return {'emotion_logits': out,
+                    'personality_scores': None}
+        else:
+            out = (torch.sigmoid(logits) + torch.sigmoid(sim)) / 2
+            return {'emotion_logits': None,
+                    'personality_scores': out}
 
 
 class MultiModalFusionModel(nn.Module):

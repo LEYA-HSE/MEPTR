@@ -16,7 +16,7 @@ from utils.schedulers import SmartScheduler
 from utils.logger_setup import color_metric, color_split
 from utils.measures import mf1, uar, acc_func, ccc
 from utils.losses import MultiTaskLossWithNaN
-from models.models import MultiModalFusionModelWithAblation
+from models.models import MultiModalFusionModelWithAblation, SingleTaskSlimModel
 
 
 # ─────────────────────────────── utils ────────────────────────────────
@@ -43,18 +43,30 @@ def process_predictions(pred_emo, true_emo):
     true_emo = np.where(true_emo > 0, 1, 0)[:, 1:].tolist()
     return pred_emo, true_emo
 
+def drop_domains_in_batch(batch: dict, cfg):
+    """Zero-out cross-domain logits according to cfg flags."""
+    if cfg.single_task:
+        if getattr(cfg, "drop_personality_domain", False) and "personality_scores" in batch:
+            for mod in batch["personality_scores"]:
+                batch["personality_scores"][mod] = None
+        if getattr(cfg, "drop_emotion_domain", False) and "emotion_logits" in batch:
+            for mod in batch["emotion_logits"]:
+                batch["emotion_logits"][mod] = None
+    return batch
 
 # ─────────────────────────── evaluation ────────────────────────────
 @torch.no_grad()
 def evaluate_epoch(model: torch.nn.Module,
                    loader: DataLoader,
-                   device: torch.device) -> Dict[str, float]:
+                   device: torch.device,
+                   cfg) -> Dict[str, float]:
     """Собирает метрики на всём лоадере."""
     model.eval()
     emo_preds, emo_tgts = [], []
     pkl_preds, pkl_tgts = [], []
 
     for batch in tqdm(loader, desc="Eval", leave=False):
+        batch = drop_domains_in_batch(batch, cfg)
         out = model(batch)
 
         # Emotion
@@ -92,7 +104,8 @@ def evaluate_epoch(model: torch.nn.Module,
 def log_and_aggregate_split(name: str,
                             loaders: dict[str, DataLoader],
                             model: torch.nn.Module,
-                            device: torch.device) -> dict[str, float]:
+                            device: torch.device,
+                            cfg) -> dict[str, float]:
     """
     Универсальная функция логирования и подсчёта агрегатов для dev/test.
     """
@@ -100,7 +113,7 @@ def log_and_aggregate_split(name: str,
     all_metrics: dict[str, float] = {}
 
     for ds_name, loader in loaders.items():
-        m = evaluate_epoch(model, loader, device)
+        m = evaluate_epoch(model, loader, device, cfg)
         all_metrics.update({f"{k}_{ds_name}": v for k, v in m.items()})
         # msg = " · ".join(f"{k}:{v:.4f}" for k, v in m.items())
         msg = " · ".join(color_metric(k, v) for k, v in m.items())
@@ -126,6 +139,7 @@ def log_and_aggregate_split(name: str,
 
     return all_metrics
 
+
 # ────────────────────────── основной train() ──────────────────────────
 def train(cfg,
           mm_loader: DataLoader,
@@ -137,84 +151,90 @@ def train(cfg,
     dev_loader   – optional, для валидации
     test_loader  – optional, для оценки в конце
     """
-
-    modality_combinations = [
-    [],  # 0 use all modalities
-
-    # Single modalities
-    ["audio"],      # 1
-    ["text"],       # 2
-    ["scene"],      # 3
-    ["face"],       # 4
-    ["body"],       # 5
-
-    # Two modalities
-    ["audio", "text"],      # 6
-    ["audio", "scene"],     # 7
-    ["audio", "face"],      # 8
-    ["audio", "body"],      # 9
-    ["text", "scene"],      # 10
-    ["text", "face"],       # 11
-    ["text", "body"],       # 12
-    ["scene", "face"],      # 13
-    ["scene", "body"],      # 14
-    ["face", "body"],       # 15
-
-    # Three modalities
-    ["audio", "text", "scene"],    # 16
-    ["audio", "text", "face"],     # 17
-    ["audio", "text", "body"],     # 18
-    ["audio", "scene", "face"],    # 19
-    ["audio", "scene", "body"],    # 20
-    ["audio", "face", "body"],     # 21
-    ["text", "scene", "face"],     # 22
-    ["text", "scene", "body"],     # 23
-    ["text", "face", "body"],      # 24
-    ["scene", "face", "body"],     # 25
-    ]
-
-    components = [-1,"disable_graph_attn", "disable_cross_attn", "disable_emo_logit_proj", "disable_pkl_logit_proj", "disable_guide_emo", "disable_guide_pkl"]
-
-    single_task_variants = [
-        ("both", "emo"),   # 0 — emo+pkl → Emo
-        ("emo",  "emo"),   # 1 — Emo-половина → Emo
-        ("both", "pkl"),   # 2 — emo+pkl → PKL
-        ("pkl",  "pkl"),   # 3 — PKL-половина → PKL
-    ]
-
     seed_everything(cfg.random_seed)
     device = cfg.device
 
-    # ─── 1. Флаг «single_task» и авто-настройка весов ───────────────
+    # ─── Single‑task domain‑drop flags ────────────────────────────
     if cfg.single_task:
-        feature_slice, target_task = single_task_variants[cfg.single_task_id]
+        mode = cfg.single_task_id  # 0 = none, 1 = drop pkl, 2 = drop emo
+        cfg.drop_personality_domain = mode == 1
+        cfg.drop_emotion_domain = mode == 2
+    else:
+        cfg.drop_personality_domain = False
+        cfg.drop_emotion_domain = False
 
-        # веса лосса + selection-metric
-        if target_task == "emo":
+    # ─── Ablation config for multi‑modal model ────────────────────
+    ablation_config = {}
+    if not cfg.single_task:
+        modality_combinations = [
+        [],  # 0 use all modalities
+
+        # Single modalities
+        ["audio"],      # 1
+        ["text"],       # 2
+        ["scene"],      # 3
+        ["face"],       # 4
+        ["body"],       # 5
+
+        # Two modalities
+        ["audio", "text"],      # 6
+        ["audio", "scene"],     # 7
+        ["audio", "face"],      # 8
+        ["audio", "body"],      # 9
+        ["text", "scene"],      # 10
+        ["text", "face"],       # 11
+        ["text", "body"],       # 12
+        ["scene", "face"],      # 13
+        ["scene", "body"],      # 14
+        ["face", "body"],       # 15
+
+        # Three modalities
+        ["audio", "text", "scene"],    # 16
+        ["audio", "text", "face"],     # 17
+        ["audio", "text", "body"],     # 18
+        ["audio", "scene", "face"],    # 19
+        ["audio", "scene", "body"],    # 20
+        ["audio", "face", "body"],     # 21
+        ["text", "scene", "face"],     # 22
+        ["text", "scene", "body"],     # 23
+        ["text", "face", "body"],      # 24
+        ["scene", "face", "body"],     # 25
+        ]
+
+        components = [-1,"disable_graph_attn", "disable_cross_attn", "disable_emo_logit_proj", "disable_pkl_logit_proj", "disable_guide_emo", "disable_guide_pkl"]
+
+        ablation_config={"disabled_modalities": modality_combinations[cfg.id_ablation_type_by_modality], components[cfg.id_ablation_type_by_component]: True} if components[cfg.id_ablation_type_by_component] != -1 else {"disabled_modalities": modality_combinations[cfg.id_ablation_type_by_modality]}
+
+
+    # ─── Model selection ──────────────────────────────────────────
+    if cfg.single_task:
+
+        model = SingleTaskSlimModel(
+            target=cfg.single_task_target,
+            hidden_dim=cfg.hidden_dim,
+            num_heads=cfg.num_transformer_heads,
+            dropout=cfg.dropout,
+            emo_out_dim=7,
+            pkl_out_dim=5,
+            device=device
+        ).to(device)
+
+        if cfg.single_task_target == "emo":
             cfg.weight_emotion, cfg.weight_pers = 1.0, 0.0
             cfg.selection_metric = "mean_emo"
-        elif target_task == "pkl":
+        else:
             cfg.weight_emotion, cfg.weight_pers = 0.0, 1.0
             cfg.selection_metric = "mean_pkl"
     else:
-        feature_slice, target_task = None, "both" # модель ничего не знает
-
-    ablation_config={"disabled_modalities": modality_combinations[cfg.id_ablation_type_by_modality], components[cfg.id_ablation_type_by_component]: True} if components[cfg.id_ablation_type_by_component] != -1 else {"disabled_modalities": modality_combinations[cfg.id_ablation_type_by_modality]}
-
-    if cfg.single_task:
-        ablation_config["feature_slice"] = feature_slice   # "both" | "emo" | "pkl"
-        ablation_config["target_task"]   = target_task     # "both" | "emo" | "pkl"
-
-    # ── 0. Модель и оптимизатор ───────────────────────────────────────
-    model = MultiModalFusionModelWithAblation(
-        hidden_dim=cfg.hidden_dim,
-        num_heads = cfg.num_transformer_heads,
-        dropout=cfg.dropout,
-        emo_out_dim=7,
-        pkl_out_dim=5,
-        device=device,
-        ablation_config = ablation_config
-    ).to(device)
+        model = MultiModalFusionModelWithAblation(
+            hidden_dim=cfg.hidden_dim,
+            num_heads = cfg.num_transformer_heads,
+            dropout=cfg.dropout,
+            emo_out_dim=7,
+            pkl_out_dim=5,
+            device=device,
+            ablation_config = ablation_config
+        ).to(device)
 
     if cfg.optimizer == "adam":
         optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
@@ -270,6 +290,8 @@ def train(cfg,
             if batch is None:
                 continue
 
+            batch = drop_domains_in_batch(batch, cfg)
+
             emo_labels = batch["labels"]["emotion"].to(device)
             per_labels = batch["labels"]["personality"].to(device)
 
@@ -318,8 +340,8 @@ def train(cfg,
         )
 
         # ── Evaluation ──
-        cur_dev = log_and_aggregate_split("Dev", dev_loaders, model, device)
-        cur_test = log_and_aggregate_split("Test", test_loaders, model, device) if test_loaders else {}
+        cur_dev = log_and_aggregate_split("Dev", dev_loaders, model, device, cfg)
+        cur_test = log_and_aggregate_split("Test", test_loaders, model, device, cfg) if test_loaders else {}
 
         cur_eval = cur_dev if cfg.early_stop_on == "dev" else cur_test
 
@@ -329,7 +351,7 @@ def train(cfg,
 
         # ── выбираем целевую метрику в зависимости от режима ──
         if cfg.single_task:
-            metric_key = "mean_emo" if target_task == "emo" else "mean_pkl"
+            metric_key = "mean_emo" if cfg.single_task_target  == "emo" else "mean_pkl"
             metric_val = cur_eval.get(metric_key)
         else:                                           # мульти-таск
             if mean_emo is not None and mean_pkl is not None:
@@ -339,7 +361,6 @@ def train(cfg,
 
         scheduler.step(metric_val)
 
-        # improved_emo = (mean_emo is not None) and (mean_emo > best_mean_emo)
         improved = metric_val > best_score
 
         if improved:
