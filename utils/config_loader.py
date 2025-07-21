@@ -69,13 +69,16 @@ class ConfigLoader:
         self.lambda_domain = train_general.get("lambda_domain", 0.1)
         self.checkpoint_dir = train_general.get("checkpoint_dir","checkpoints")
         self.device = train_general.get("device", "cuda")
-
+        self.selection_metric = train_general.get("selection_metric", "mean_combo")
+        self.single_task = train_general.get("single_task", False)
 
         # ---------------------------
         # Тренировка: параметры модели
         # ---------------------------
         train_model = self.config.get("train", {}).get("model", {})
-        self.id_ablation_type = train_model.get("id_ablation_type", 0)
+        self.id_ablation_type_by_modality = train_model.get("id_ablation_type_by_modality", 0)
+        self.id_ablation_type_by_component = train_model.get("id_ablation_type_by_component", 6)
+        self.single_task_id = train_model.get("single_task_id", 0)
         self.model_name = train_model.get("model_name", "BiFormer")
         self.model_stage = train_model.get("model_stage", "emotion")
         self.path_to_saved_emotion_model = train_model.get("path_to_saved_emotion_model", None)

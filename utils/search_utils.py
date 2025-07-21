@@ -10,6 +10,7 @@ import numpy as np
 
 # ── порядок вывода метрик (сначала приоритетные, потом «прочее») ───────────
 METRIC_ORDER = [
+    "mean_combo",
     "mean_emo", "mUAR", "mF1",          # эмо-блок
     "mean_pkl", "ACC",  "CCC",          # pkl-блок
 ]
@@ -31,6 +32,12 @@ def format_result_box_dual(step_num: int,
     """Красивый АСКИИ-бокс с метриками dev / test."""
     title = f"Шаг {step_num}: {param_name} = {candidate}"
     fixed_lines = [f"{k} = {v}" for k, v in fixed_params.items()]
+
+    # — Добавляем mean_combo —
+    if "mean_emo" in dev_metrics and "mean_pkl" in dev_metrics:
+        dev_metrics["mean_combo"] = 0.5 * (dev_metrics["mean_emo"] + dev_metrics["mean_pkl"])
+    if "mean_emo" in test_metrics and "mean_pkl" in test_metrics:
+        test_metrics["mean_combo"] = 0.5 * (test_metrics["mean_emo"] + test_metrics["mean_pkl"])
 
     def format_metrics_block(metrics: dict[str, Any], label: str) -> list[str]:
         lines = [f"  Результаты ({label.upper()}):"]
@@ -174,12 +181,11 @@ def exhaustive_search(
     param_grid: dict[str, list],
 ):
     all_param_names  = list(param_grid.keys())
-    model_name       = getattr(base_config, "model_name", "UNKNOWN_MODEL")
-    selection_metric = getattr(base_config, "selection_metric", "mean_emo")
+    selection_metric = base_config.selection_metric
 
     with open(overrides_file, "a", encoding="utf-8") as f:
         f.write("=== Полный перебор гиперпараметров (Dev-based) ===\n")
-        f.write(f"Модель: {model_name}\n")
+        f.write(f"Модель: {base_config.model_name}\n")
 
     best_config = None
     best_score  = float("-inf")

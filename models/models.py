@@ -63,6 +63,22 @@ class GraphAttentionLayer(nn.Module):
         h_prime = torch.matmul(attention, Wh)  # [B, N, D']
         return h_prime
 
+class FeatureSlice(nn.Module):
+    """Отбрасывает половину конкат-вектора [emo‖pkl] по нужному режиму."""
+    def __init__(self, mode="both"):
+        super().__init__()
+        if mode not in ("both", "emo", "pkl"):
+            raise ValueError("feature_slice must be both|emo|pkl")
+        self.mode = mode
+
+    def forward(self, x):
+        if self.mode == "both":
+            return x
+        half = x.size(-1) // 2
+        left, right = x[..., :half], x[..., half:]
+        zeros = torch.zeros_like(left, device=x.device)
+        return torch.cat([left, zeros], -1) if self.mode == "emo" else torch.cat([zeros, right], -1)
+
 class MultiModalFusionModelWithAblation(nn.Module):
     def __init__(self, hidden_dim=512, num_heads=8, dropout=0.1,
                  emo_out_dim=7, pkl_out_dim=5, device='cpu', ablation_config=None):
@@ -80,6 +96,12 @@ class MultiModalFusionModelWithAblation(nn.Module):
         self.disable_emo_logit_proj = self.ablation_config.get("disable_emo_logit_proj", False)
         self.disable_pkl_logit_proj = self.ablation_config.get("disable_pkl_logit_proj", False)
         self.disable_guide_bank = self.ablation_config.get("disable_guide_bank", False)
+
+
+        # ── SINGLE-TASK (появляется, только если флаг задан) ──
+        self.feature_slice_mode = ablation_config.get("feature_slice", None)   # None | both|emo|pkl
+        self.target_task = ablation_config.get("target_task", None)
+        self.slice = FeatureSlice(self.feature_slice_mode) if self.feature_slice_mode else None
 
         self.modalities = {
             'body': 1024 * 2,
@@ -127,7 +149,10 @@ class MultiModalFusionModelWithAblation(nn.Module):
 
         for mod, feat in batch['features'].items():
             if feat is not None and mod in self.projectors and mod not in self.disabled_modalities:
-                x_proj = self.projectors[mod](feat.to(self.device))  # [D]
+                feat = feat.to(self.device)
+                if self.slice is not None:
+                    feat = self.slice(feat)
+                x_proj = self.projectors[mod](feat)  # [D]
                 x_mods.append(x_proj)
                 valid_modalities.append(mod)
 
@@ -190,6 +215,13 @@ class MultiModalFusionModelWithAblation(nn.Module):
         else:
             emo_final = emo_pred
             pkl_final = pkl_pred
+
+        # single-task: глушим лишнюю голову ТОЛЬКО если slice задан
+        if self.feature_slice_mode:
+            if self.target_task == "emo":
+                pkl_pred = None
+            elif self.target_task == "pkl":
+                emo_pred = None
 
         return {'emotion_logits': emo_final, "personality_scores": pkl_final}
 

@@ -39,13 +39,17 @@ search_type = "exhaustive"        # стратегия поиска: "greedy", "
 early_stop_on = "test"  # dev или "test" набор для оптимизации параметров обучения
 checkpoint_dir = "checkpoints"
 device = "cuda"           # "cuda" или "cpu", куда грузить модел
-selection_metric =  "mean_emo"   # или "mF1", "mUAR", "ACC" …
+selection_metric = "mean_combo"   # mean_emo или "mF1", "mUAR", "ACC" … mean_combo
+single_task = true
+
 
 # ---------------------------
 # Параметры модели
 # ---------------------------
 [train.model]
-id_ablation_type      = 0
+id_ablation_type_by_modality  = 0
+id_ablation_type_by_component = 6
+single_task_id = 0
 model_name            = "FusionTransformer" # название модели
 model_stage           = 'fusion' # название этапа personality, emotion, fusion
 per_activation        = "relu"   # sigmoid
@@ -54,11 +58,11 @@ weight_pers           = 1        # для корректировки лосса 
 pers_loss_type        = 'mae'    # ccc, mae, mse, rmse_bell, rmse_logcosh, RMGL
 emotion_loss_type     = 'CE'
 flag_emo_weight       = false     # используем веса для дисбаланса эмоциональных классов
-hidden_dim            = 512      # размер скрытого состояния
+hidden_dim            = 256      # размер скрытого состояния
 num_transformer_heads = 8        # количество attention голов в трансформере
 tr_layer_number       = 5        # количество слоев в трансформере
 positional_encoding   = false    # использовать ли позиционное кодирование
-dropout               = 0.15     # dropout между слоями
+dropout               = 0.2     # dropout между слоями
 out_features          = 256      # размер финальных признаков перед классификацией
 
 # ---------------------------
@@ -66,7 +70,7 @@ out_features          = 256      # размер финальных призна�
 # ---------------------------
 [train.optimizer]
 optimizer = "adam"        # тип оптимизатора: "adam", "adamw", "lion", "sgd", "rmsprop"
-lr = 1e-5                 # начальная скорость обучения
+lr = 1e-4                 # начальная скорость обучения
 weight_decay = 1e-5        # weight decay для регуляризации
 momentum = 0.9            # momentum (используется только в SGD)
 

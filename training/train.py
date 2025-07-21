@@ -16,7 +16,7 @@ from utils.schedulers import SmartScheduler
 from utils.logger_setup import color_metric, color_split
 from utils.measures import mf1, uar, acc_func, ccc
 from utils.losses import MultiTaskLossWithNaN
-from models.models import MultiModalFusionModel, MultiModalFusionModelWithAblation
+from models.models import MultiModalFusionModelWithAblation
 
 
 # ─────────────────────────────── utils ────────────────────────────────
@@ -59,20 +59,23 @@ def evaluate_epoch(model: torch.nn.Module,
 
         # Emotion
         logits_e = out["emotion_logits"]
-        y_e = batch["labels"]["emotion"]
-        valid_e = ~torch.isnan(y_e).all(dim=1)
-        if valid_e.any():
-            p, t = process_predictions(logits_e[valid_e], y_e[valid_e])
-            emo_preds.extend(p)
-            emo_tgts.extend(t)
+        if logits_e is not None:
+            y_e = batch["labels"]["emotion"]
+            valid_e = ~torch.isnan(y_e).all(dim=1)
+            if valid_e.any():
+                p, t = process_predictions(logits_e[valid_e], y_e[valid_e])
+                emo_preds.extend(p)
+                emo_tgts.extend(t)
 
         # Personality
-        preds_p = out["personality_scores"].cpu()
-        y_p = batch["labels"]["personality"]
-        valid_p = ~torch.isnan(y_p).all(dim=1)
-        if valid_p.any():
-            pkl_preds.append(preds_p[valid_p].numpy())
-            pkl_tgts.append(y_p[valid_p].numpy())
+        preds_p = out["personality_scores"]
+        if preds_p is not None:
+            preds_p = preds_p.cpu()
+            y_p = batch["labels"]["personality"]
+            valid_p = ~torch.isnan(y_p).all(dim=1)
+            if valid_p.any():
+                pkl_preds.append(preds_p[valid_p].numpy())
+                pkl_tgts.append(y_p[valid_p].numpy())
 
     metrics: dict[str, float] = {}
     if emo_tgts:
@@ -135,8 +138,72 @@ def train(cfg,
     test_loader  – optional, для оценки в конце
     """
 
+    modality_combinations = [
+    [],  # 0 use all modalities
+
+    # Single modalities
+    ["audio"],      # 1
+    ["text"],       # 2
+    ["scene"],      # 3
+    ["face"],       # 4
+    ["body"],       # 5
+
+    # Two modalities
+    ["audio", "text"],      # 6
+    ["audio", "scene"],     # 7
+    ["audio", "face"],      # 8
+    ["audio", "body"],      # 9
+    ["text", "scene"],      # 10
+    ["text", "face"],       # 11
+    ["text", "body"],       # 12
+    ["scene", "face"],      # 13
+    ["scene", "body"],      # 14
+    ["face", "body"],       # 15
+
+    # Three modalities
+    ["audio", "text", "scene"],    # 16
+    ["audio", "text", "face"],     # 17
+    ["audio", "text", "body"],     # 18
+    ["audio", "scene", "face"],    # 19
+    ["audio", "scene", "body"],    # 20
+    ["audio", "face", "body"],     # 21
+    ["text", "scene", "face"],     # 22
+    ["text", "scene", "body"],     # 23
+    ["text", "face", "body"],      # 24
+    ["scene", "face", "body"],     # 25
+    ]
+
+    components = [-1,"disable_graph_attn", "disable_cross_attn", "disable_emo_logit_proj", "disable_pkl_logit_proj", "disable_guide_emo", "disable_guide_pkl"]
+
+    single_task_variants = [
+        ("both", "emo"),   # 0 — emo+pkl → Emo
+        ("emo",  "emo"),   # 1 — Emo-половина → Emo
+        ("both", "pkl"),   # 2 — emo+pkl → PKL
+        ("pkl",  "pkl"),   # 3 — PKL-половина → PKL
+    ]
+
     seed_everything(cfg.random_seed)
     device = cfg.device
+
+    # ─── 1. Флаг «single_task» и авто-настройка весов ───────────────
+    if cfg.single_task:
+        feature_slice, target_task = single_task_variants[cfg.single_task_id]
+
+        # веса лосса + selection-metric
+        if target_task == "emo":
+            cfg.weight_emotion, cfg.weight_pers = 1.0, 0.0
+            cfg.selection_metric = "mean_emo"
+        elif target_task == "pkl":
+            cfg.weight_emotion, cfg.weight_pers = 0.0, 1.0
+            cfg.selection_metric = "mean_pkl"
+    else:
+        feature_slice, target_task = None, "both" # модель ничего не знает
+
+    ablation_config={"disabled_modalities": modality_combinations[cfg.id_ablation_type_by_modality], components[cfg.id_ablation_type_by_component]: True} if components[cfg.id_ablation_type_by_component] != -1 else {"disabled_modalities": modality_combinations[cfg.id_ablation_type_by_modality]}
+
+    if cfg.single_task:
+        ablation_config["feature_slice"] = feature_slice   # "both" | "emo" | "pkl"
+        ablation_config["target_task"]   = target_task     # "both" | "emo" | "pkl"
 
     # ── 0. Модель и оптимизатор ───────────────────────────────────────
     model = MultiModalFusionModelWithAblation(
@@ -146,7 +213,7 @@ def train(cfg,
         emo_out_dim=7,
         pkl_out_dim=5,
         device=device,
-        ablation_config={"disabled_modalities": [], "disable_guide_emo": False, "disable_guide_pkl": True}
+        ablation_config = ablation_config
     ).to(device)
 
     if cfg.optimizer == "adam":
@@ -226,17 +293,19 @@ def train(cfg,
             total_loss += loss.item() * bs
             total_samples += bs
 
-            preds_emo, targets_emo = process_predictions(
-                outputs['emotion_logits'][valid_emo],
-                emo_labels[valid_emo]
-            )
-            total_preds_emo.extend(preds_emo)
-            total_targets_emo.extend(targets_emo)
+            if outputs['emotion_logits'] is not None and valid_emo.any():
+                preds_emo, targets_emo = process_predictions(
+                    outputs['emotion_logits'][valid_emo],
+                    emo_labels[valid_emo]
+                )
+                total_preds_emo.extend(preds_emo)
+                total_targets_emo.extend(targets_emo)
 
-            preds_per = outputs['personality_scores'][valid_per]
-            targets_per = per_labels[valid_per]
-            total_preds_per.extend(preds_per.cpu().detach().numpy().tolist())
-            total_targets_per.extend(targets_per.cpu().detach().numpy().tolist())
+            if outputs['personality_scores'] is not None and valid_per.any():
+                preds_per = outputs['personality_scores'][valid_per]
+                targets_per = per_labels[valid_per]
+                total_preds_per.extend(preds_per.cpu().detach().numpy().tolist())
+                total_targets_per.extend(targets_per.cpu().detach().numpy().tolist())
 
         # --- train метрики ---
         train_loss = total_loss / total_samples
@@ -262,8 +331,6 @@ def train(cfg,
             mean_combo = 0.5 * (mean_emo + mean_pkl)
         else:
             mean_combo = mean_emo if mean_emo is not None else mean_pkl  # фоллбэк на одну из метрик
-
-        logging.info(f"[{color_split('COMBO')}] mean_emo={mean_emo:.4f}, mean_pkl={mean_pkl:.4f}, combo={mean_combo:.4f}")
 
         scheduler.step(mean_combo)
 

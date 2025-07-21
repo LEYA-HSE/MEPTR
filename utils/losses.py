@@ -340,9 +340,11 @@ class MultiTaskLossWithNaN(nn.Module):
 
         # Emotion branch
         emo_mask = labels['valid_emo']
-        if emo_mask.any():
+        pred_emotion = outputs.get('emotion_logits')
+        if pred_emotion is not None and emo_mask.any():
             true_emotion = labels['emotion'][emo_mask]
-            pred_emotion = outputs['emotion_logits'][emo_mask]
+            pred_emotion = pred_emotion[emo_mask]
+            # pred_emotion = outputs['emotion_logits'][emo_mask]
 
             if self.emotion_loss_type == 'BCE':
                 true_emotion = binarize_with_nan(true_emotion, threshold=0)
@@ -351,9 +353,11 @@ class MultiTaskLossWithNaN(nn.Module):
 
         # Personality branch
         per_mask = labels['valid_per']
-        if per_mask.any():
+        pred_personality = outputs.get('personality_scores')
+        if pred_personality is not None and per_mask.any():
             true_personality = labels['personality'][per_mask]
-            pred_personality = outputs['personality_scores'][per_mask]
+            # pred_personality = outputs['personality_scores'][per_mask]
+            pred_personality = pred_personality[per_mask]
 
             if self.personality_loss_type == "ccc":
                 loss_per = 0.0
