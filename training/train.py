@@ -16,7 +16,7 @@ from utils.schedulers import SmartScheduler
 from utils.logger_setup import color_metric, color_split
 from utils.measures import mf1, uar, acc_func, ccc
 from utils.losses import MultiTaskLossWithNaN
-from models.models import MultiModalFusionModelWithAblation, SingleTaskSlimModel
+from models.models import MultiModalFusionModelWithAblation, SingleTaskSlimModel,SingleTaskAsymModel
 
 
 # ─────────────────────────────── utils ────────────────────────────────
@@ -219,7 +219,8 @@ def train(cfg,
     # ─── Model selection ──────────────────────────────────────────
     if cfg.single_task:
 
-        model = SingleTaskSlimModel(
+        # model = SingleTaskSlimModel(
+        model = SingleTaskAsymModel(
             feature_slice = feature_slice,   # "both" | "emo" | "pkl"
             target        = task_target,     # "emo" | "pkl"
             hidden_dim    = cfg.hidden_dim,

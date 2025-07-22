@@ -3,6 +3,8 @@
 # id_ablation_type_by_modality = [0]
 # id_ablation_type_by_component =  [0, 1, 2, 3, 4, 5, 6, 7]
 # id_ablation_type_by_component =  [6]
+# hidden_dim = [128,256,512]
+# num_transformer_heads = [2,4,8,16]
 single_task_id = [0,1,2,3] # для emo   → 0,1  ; для pkl   → 0,2
 
 [defaults]
