@@ -79,7 +79,6 @@ class ConfigLoader:
         self.id_ablation_type_by_modality = train_model.get("id_ablation_type_by_modality", 0)
         self.id_ablation_type_by_component = train_model.get("id_ablation_type_by_component", 6)
         self.single_task_id = train_model.get("single_task_id", 0)
-        self.single_task_target = train_model.get("single_task_target", "emo")
         self.model_name = train_model.get("model_name", "BiFormer")
         self.model_stage = train_model.get("model_stage", "emotion")
         self.path_to_saved_emotion_model = train_model.get("path_to_saved_emotion_model", None)

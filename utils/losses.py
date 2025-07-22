@@ -378,5 +378,12 @@ class MultiTaskLossWithNaN(nn.Module):
                     true_personality,
                     pred_personality
                 )
+        if not isinstance(loss, torch.Tensor):
+            device = (
+                outputs.get("emotion_logits", None).device
+                if outputs.get("emotion_logits", None) is not None
+                else outputs.get("personality_scores", torch.tensor(0.0)).device
+            )
+            loss = torch.tensor(0.0, requires_grad=True, device=device)
 
         return loss

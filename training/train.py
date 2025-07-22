@@ -154,14 +154,24 @@ def train(cfg,
     seed_everything(cfg.random_seed)
     device = cfg.device
 
-    # ─── Single‑task domain‑drop flags ────────────────────────────
+    # ─── Single-task routing (4 варианта) ─────────────────────────────
     if cfg.single_task:
-        mode = cfg.single_task_id  # 0 = none, 1 = drop pkl, 2 = drop emo
-        cfg.drop_personality_domain = mode == 1
-        cfg.drop_emotion_domain = mode == 2
+        #   0: Emo+PKL → Emo     1: Emo → Emo
+        #   2: Emo+PKL → PKL     3: PKL → PKL
+        slice_map = [("both", "emo"), ("emo", "emo"),
+                    ("both", "pkl"), ("pkl", "pkl")]
+        try:
+            feature_slice, task_target = slice_map[cfg.single_task_id]
+        except IndexError:
+            raise ValueError("single_task_id must be 0-3")
+
+        # обнуляем ненужные чужие logits
+        cfg.drop_personality_domain = feature_slice == "emo"
+        cfg.drop_emotion_domain     = feature_slice == "pkl"
     else:
-        cfg.drop_personality_domain = False
-        cfg.drop_emotion_domain = False
+        feature_slice = task_target = None
+        cfg.drop_personality_domain = cfg.drop_emotion_domain = False
+
 
     # ─── Ablation config for multi‑modal model ────────────────────
     ablation_config = {}
@@ -210,21 +220,21 @@ def train(cfg,
     if cfg.single_task:
 
         model = SingleTaskSlimModel(
-            target=cfg.single_task_target,
-            hidden_dim=cfg.hidden_dim,
-            num_heads=cfg.num_transformer_heads,
-            dropout=cfg.dropout,
-            emo_out_dim=7,
-            pkl_out_dim=5,
-            device=device
+            feature_slice = feature_slice,   # "both" | "emo" | "pkl"
+            target        = task_target,     # "emo" | "pkl"
+            hidden_dim    = cfg.hidden_dim,
+            num_heads     = cfg.num_transformer_heads,
+            dropout       = cfg.dropout,
+            emo_out_dim   = 7,
+            pkl_out_dim   = 5,
+            device        = device,
         ).to(device)
 
-        if cfg.single_task_target == "emo":
-            cfg.weight_emotion, cfg.weight_pers = 1.0, 0.0
-            cfg.selection_metric = "mean_emo"
+        if task_target == "emo":
+            cfg.weight_emotion, cfg.weight_pers, cfg.selection_metric = 1.0, 0.0, "mean_emo"
         else:
-            cfg.weight_emotion, cfg.weight_pers = 0.0, 1.0
-            cfg.selection_metric = "mean_pkl"
+            cfg.weight_emotion, cfg.weight_pers, cfg.selection_metric = 0.0, 1.0, "mean_pkl"
+
     else:
         model = MultiModalFusionModelWithAblation(
             hidden_dim=cfg.hidden_dim,
@@ -354,8 +364,7 @@ def train(cfg,
 
         # ── выбираем целевую метрику в зависимости от режима ──
         if cfg.single_task:
-            metric_key = "mean_emo" if cfg.single_task_target  == "emo" else "mean_pkl"
-            metric_val = cur_eval.get(metric_key)
+            metric_val = cur_eval["mean_emo"] if task_target == "emo" else cur_eval["mean_pkl"]
         else:                                           # мульти-таск
             if mean_emo is not None and mean_pkl is not None:
                 metric_val = 0.5 * (mean_emo + mean_pkl)

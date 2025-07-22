@@ -40,7 +40,7 @@ early_stop_on = "test"  # dev или "test" набор для оптимизац
 checkpoint_dir = "checkpoints"
 device = "cuda"           # "cuda" или "cpu", куда грузить модел
 selection_metric = "mean_combo"   # mean_emo или "mF1", "mUAR", "ACC" … mean_combo
-single_task = false
+single_task = true
 
 
 # ---------------------------
@@ -50,7 +50,6 @@ single_task = false
 id_ablation_type_by_modality  = 0
 id_ablation_type_by_component = 6
 single_task_id = 0      # 0: базовый • 1: drop PKL • 2: drop EMO
-single_task_target = "emo" # "emo" ли "pkl"
 model_name            = "FusionTransformer" # название модели
 model_stage           = 'fusion' # название этапа personality, emotion, fusion
 per_activation        = "relu"   # sigmoid

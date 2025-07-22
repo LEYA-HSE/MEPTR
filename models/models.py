@@ -64,14 +64,21 @@ class GraphAttentionLayer(nn.Module):
         return h_prime
 
 class FeatureSlice(nn.Module):
-    """Отбрасывает половину конкат-вектора [emo‖pkl] по нужному режиму."""
-    def __init__(self, mode="both"):
+    """
+    Зануляет ненужную половину конкат-вектора [emo‖pkl] в зависимости от режима:
+        mode='both' — ничего не меняет
+        mode='emo'  — обнуляет PKL-часть
+        mode='pkl'  — обнуляет Emo-часть
+    Форма тензора сохраняется, так что последующие линейные проекции остаются валидными.
+    """
+
+    def __init__(self, mode: str = "both"):
         super().__init__()
         if mode not in ("both", "emo", "pkl"):
-            raise ValueError("feature_slice must be both|emo|pkl")
+            raise ValueError("feature_slice must be 'both' | 'emo' | 'pkl'")
         self.mode = mode
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.mode == "both":
             return x
         half = x.size(-1) // 2
@@ -214,18 +221,16 @@ class MultiModalFusionModelWithAblation(nn.Module):
 
 class SingleTaskSlimModel(nn.Module):
     """
-    Однотасковая «тонкая» модель. Работает только с нужным доменом
-    (emo или pkl), но может подмешивать к вектору модальности logits
-    из другого пайплайна (если они переданы в batch’е).
-
-    Parameters
-    ----------
-    target : "emo" | "pkl"
+    Четыре варианта single-task (см. single_task_id):
+        0: обе половины [emo‖pkl] → предсказываем Emo
+        1: только Emo-половина     → предсказываем Emo
+        2: обе половины [emo‖pkl] → предсказываем PKL
+        3: только PKL-половина     → предсказываем PKL
     """
-
     def __init__(
         self,
-        target: str,
+        target: str,                    # 'emo' | 'pkl'   — какая голова тренируется
+        feature_slice: str = "both",    # 'both' | 'emo' | 'pkl' — чем кормим сеть
         hidden_dim: int = 512,
         num_heads: int = 8,
         dropout: float = 0.1,
@@ -236,17 +241,21 @@ class SingleTaskSlimModel(nn.Module):
         super().__init__()
         if target not in ("emo", "pkl"):
             raise ValueError("target must be 'emo' or 'pkl'")
+        if feature_slice not in ("both", "emo", "pkl"):
+            raise ValueError("feature_slice must be 'both' | 'emo' | 'pkl'")
+
         self.target = target
         self.device = device
 
-        # ← БЕЗ ×2: берём ровно тот вектор, который нужен задаче
+        # модальные входы (без ×2 — сырая размерность одной половины)
         self.modalities = {
-            'body' : 1024,
-            'face' : 512,
-            'scene': 768,
-            'audio': 256,
-            'text' : 256,
+            "body": 1024 * 2,
+            "face": 512 * 2,
+            "scene": 768 * 2,
+            "audio": 256 * 2,
+            "text": 256 * 2,
         }
+
         self.projectors = nn.ModuleDict(
             {
                 m: nn.Sequential(
@@ -257,73 +266,63 @@ class SingleTaskSlimModel(nn.Module):
             }
         )
 
+        # zero-out срезатель
+        self.slice = FeatureSlice(feature_slice)
+
         self.graph_attn = GraphAttentionLayer(hidden_dim, dropout=dropout)
         self.query = nn.Parameter(torch.randn(1, 1, hidden_dim))
         self.cross_attn = nn.MultiheadAttention(
             hidden_dim, num_heads, dropout=dropout, batch_first=True
         )
 
-
-        # --- выходные головы ---
+        # головы / проекции
         if target == "emo":
             self.head = nn.Linear(hidden_dim, emo_out_dim)
-            self.guide = GuideBank(emo_out_dim, hidden_dim)  # только для эмоций
+            self.guide = GuideBank(emo_out_dim, hidden_dim)
             self.logit_proj = nn.Linear(emo_out_dim, hidden_dim)
         else:
             self.head = nn.Linear(hidden_dim, pkl_out_dim)
-            self.guide = None  # для PKL guide не нужен
+            self.guide = None                          # guide-банк не нужен
             self.logit_proj = nn.Linear(pkl_out_dim, hidden_dim)
 
-
-    # ───────────────── forward ─────────────────
+    # ───────────────────────── forward ─────────────────────────
     def forward(self, batch):
-         # 1) модальные проекции
+        # 1) модальные проекции
         feats = []
         for m, f in batch["features"].items():
             if f is None or m not in self.projectors:
                 continue
-
-            # half-cut: оставляем только нужный домен
-            expected = self.modalities[m]
-            if f.size(-1) == expected * 2:  # пришёл комбинированный вектор
-                half = f.size(-1) // 2
-                f = f[..., :half] if self.target == "emo" else f[..., half:]
-
+            f = self.slice(f)  # зануляем ненужную половину
             feats.append(self.projectors[m](f.to(self.device)))
 
         if not feats:
             raise RuntimeError("No valid modality features")
 
-        x = torch.stack(feats, 1)  # [B, N, D]
+        x = torch.stack(feats, 1)                            # [B, N, D]
         B, N, _ = x.size()
         ctx = self.graph_attn(x, torch.ones(B, N, N, device=self.device))
 
-        # 2) cross-attention query → контекст
-        q = self.query.expand(B, 1, -1)
-        rep = self.cross_attn(q, ctx, ctx)[0].squeeze(1)  # [B, D]
+        # 2) cross-attention
+        rep = self.cross_attn(self.query.expand(B, 1, -1), ctx, ctx)[0].squeeze(1)
 
-        # 3) подмешиваем logits (если они есть и не дропнуты)
-        logit_feats = []
+        # 3) добавляем logits из другого домена, если они есть
         key = "emotion_logits" if self.target == "emo" else "personality_scores"
-        if key in batch:
-            for m in batch[key]:
-                l = batch[key][m]
-                if l is not None:
-                    logit_feats.append(l.to(self.device))
+        logit_feats = [
+            l.to(self.device)
+            for l in batch.get(key, {}).values()
+            if l is not None
+        ]
         if logit_feats:
             rep = rep + self.logit_proj(torch.stack(logit_feats).mean(0))
 
-        # 4) финальная голова
-        logits = self.head(rep)  # [B, C]
-
+        # 4) голова + (для Emo) guide-банк
+        logits = self.head(rep)
         if self.target == "emo":
             sim = F.cosine_similarity(rep.unsqueeze(1), self.guide().unsqueeze(0), -1)
-            out = (logits + sim) / 2
-            return {"emotion_logits": out, "personality_scores": None}
+            return {"emotion_logits": (logits + sim) / 2, "personality_scores": None}
 
-        # PKL-ветка: просто sigmoid(logits)
-        out = torch.sigmoid(logits)
-        return {"emotion_logits": None, "personality_scores": out}
+        return {"emotion_logits": None, "personality_scores": torch.sigmoid(logits)}
+
 
 
 class MultiModalFusionModel(nn.Module):
