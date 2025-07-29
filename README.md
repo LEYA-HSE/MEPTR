@@ -1,4 +1,4 @@
-# EAAI  
+# MEPTR  
 
 ## Text Modality Results  
 **Best-performing configurations**: BAAI/bge-small-en-v1.5 + Transformer and BAAI/bge-small-en-v1.5 + Mamba (for emotions) and Transformer (for personality)   
