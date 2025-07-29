@@ -16,12 +16,11 @@ The growing demand for intelligent human-computer interaction systems has driven
 
 ## ✨ Highlights
 
-- 📦 **Multitask learning** for simultaneous emotion and personality trait recognition  
-- 🌐 **Cross-domain framework** handling heterogeneous datasets  
-- 🧊 **Modular unimodal encoders** with Mamba/Transformer/GAT backbones  
-- 🔗 **Query-based multimodal fusion** with cross-attention and guide banks  
-- 🧪 **Superior performance** on CMU-MOSEI and ChaLearn v2 under low-label supervision  
-- ⚡ **Real-time inference** (RTA < 1) enabling practical applications  
+- A novel unified semi-supervised multimodal framework for Multitask Emotion and Personality Traits Recognition.
+- A multimodal fusion mechanism with Graph Attention and Task-Specific Query-Based Multi-Head Cross-Attention.
+- A three-stage learning strategy designed to enhance intra- and inter-domain interactions across modalities.
+- Establishment of new baselines on two benchmarks: CMU-MOSEI and ChaLearn First Impressions v2.
+- The framework is designed for personalized human-computer interaction systems.
 
 ---
 
@@ -29,38 +28,43 @@ The growing demand for intelligent human-computer interaction systems has driven
 
 | Branch | Description |
 |--------|-------------|
-| `main` | Default branch with descriptions for the ESWA 2025 publication. |
-| `audio_trainer` | Audio modality trainer with Mamba/Transformer-based encoders. |
-| `text_trainer` | Text-only classification pipeline using Jina embeddings and Mamba classifier. |
-| `face_trainer` | Facial expression recognition component, used in fusion. |
-| `body_trainer` | Body posture and movement feature extraction for personality traits. |
-| `scene_trainer` | Scene-aware embeddings via CNN-based encoders for environment context. |
-| `fusion` | Cross-modal fusion models integrating outputs from all modalities. Includes query-heads, graph fusion, and joint optimization pipelines. |
+| `main` | Default branch containing general repository information and descriptions corresponding to the ESWA 2025 publication. |
+| `audio_trainer` | Implementation of Audio-based Cross-Domain Model using Wav2Vec2 embeddings and Mamba encoders. |
+| `text_trainer` | Implementation of Text-based Cross-Domain Model using BGE-en embeddings and Transformer encoders. |
+| `face_trainer` | Implementation of Face-based Cross-Domain Model using CLIP embeddings and Mamba encoders. |
+| `body_trainer` | Implementation of Body-based Cross-Domain Model using CLIP embeddings and Mamba encoders. |
+| `scene_trainer` | Implementation of Scene-based Cross-Domain Model using CLIP embeddings and Transformer encoders. |
+| `fusion` | Multimodal Cross-Domain Model integrating outputs from all unimodal models, employing Graph Attention Fusion, Task-Specific Query-Based Multi-Head Cross-Attention, Predict Projectors, and Guide Banks. |
 
 ---
 
-## 🏋️‍♂️ Training
+## 🏋️‍♂️ Training Procedure
 
-The training process consists of **three phases**, implemented across separate branches:
+Training consists of **three stages**, clearly separated in the repository:
 
-### 1. **Unimodal Pretraining**
-Each modality is trained independently:
-- [`text_trainer`](https://github.com/LEYA-HSE/MEPTR/tree/text_trainer): text classification with Jina/Mamba.
-- [`audio_trainer`](https://github.com/LEYA-HSE/MEPTR/tree/audio_trainer): audio classification with wav2vec2 + Mamba.
-- [`face_trainer`](https://github.com/LEYA-HSE/MEPTR/tree/face_trainer): facial features via CNN + Transformer.
-- [`body_trainer`](https://github.com/LEYA-HSE/MEPTR/tree/body_trainer): body motion encodings via keypoints and RNNs.
-- [`scene_trainer`](https://github.com/LEYA-HSE/MEPTR/tree/scene_trainer): scene embeddings using pre-trained CNNs.
+### 1. **Unimodal Single-Domain Training**
+Independent training of modality-specific single-domain models (Stage 1):
 
-### 2. **Cross-Domain Adaptation**
-Model checkpoints are transferred between datasets (e.g., emotion → personality), aligning shared latent representations with **cross-domain losses**.
+- [`audio_trainer`](https://github.com/LEYA-HSE/MEPTR/tree/audio_trainer)
+- [`text_trainer`](https://github.com/LEYA-HSE/MEPTR/tree/text_trainer)
+- [`face_trainer`](https://github.com/LEYA-HSE/MEPTR/tree/face_trainer)
+- [`body_trainer`](https://github.com/LEYA-HSE/MEPTR/tree/body_trainer)
+- [`scene_trainer`](https://github.com/LEYA-HSE/MEPTR/tree/scene_trainer)
 
-### 3. **Multimodal Fusion**
-Branch [`fusion`](https://github.com/LEYA-HSE/MEPTR/tree/fusion) performs:
-- Feature projection and alignment,
-- Guide Bank construction per task,
-- Query-driven attention-based fusion.
+### 2. **Unimodal Cross-Domain Training**
+Cross-domain adaptation of unimodal models. Each model leverages features and predictions from single-domain training, refined via cross-attention fusion between emotion and personality tasks. (Implemented within each respective modality trainer.)
+
+### 3. **Multimodal Cross-Domain Training**
+Integration of unimodal cross-domain features and predictions into the Multimodal Cross-Domain Model (`fusion` branch), with the following key components:
+
+- **Graph Attention Fusion:** integrates multimodal features by modeling inter-modality relationships.
+- **Task-Specific Query-Based Multi-Head Cross-Attention Fusion:** selectively attends to modality-specific embeddings, optimized separately for emotion and personality recognition.
+- **Predict Projectors:** task-specific projection layers combining unimodal predictions.
+- **Guide Banks:** sets of learned embeddings providing semantic alignment across modalities.
+- **Joint Multitask Training:** simultaneously optimizing for emotion classification and personality trait regression.
 
 ---
+
 
 ## 📝 Citation
 
