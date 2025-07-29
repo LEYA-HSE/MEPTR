@@ -1,3 +1,3 @@
-# EAAI
+# MEPTR
 
-Скачать модельки: https://disk.yandex.ru/d/AYFC4OWdUAnS1g
+Models: https://disk.yandex.ru/d/AYFC4OWdUAnS1g
