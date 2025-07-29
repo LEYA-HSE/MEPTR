@@ -1,43 +1,45 @@
-# `fusion` Branch
+# Multimodal Cross-Domain Model for MEPTR (Fusion Branch)
 
-This branch contains the **final multimodal fusion pipeline** for multitask emotion and personality trait recognition, as proposed in the ESWA 2025 paper.
+This branch implements the **Multimodal Cross-Domain Model** described in our paper published in **Expert Systems with Applications (ESWA), 2025**:
 
-## 🧠 Overview
-
-The fusion architecture integrates pretrained unimodal encoders (text, audio, face, body, and scene) into a unified multitask prediction framework using:
-
-- **Query-Guided Cross-Modal Decoding**: A shared transformer-based decoder receives task-specific query embeddings and attends over modality-specific encoded representations. The decoder performs inter-modal attention without requiring explicit temporal synchronization.
-  
-- **Guide Banks**: For each modality, we construct learnable latent memory banks that store class-aware modality-level priors. These banks guide the attention mechanism during both training and inference, enabling more robust generalization in low-resource settings.
-
-- **Task-Specific Heads**: Fused representations are passed through separate classification heads for:
-  - **Emotion recognition** (multi-label classification)
-  - **Personality trait regression** (continuous trait prediction)
-
-- **Multitask Optimization**: A joint training setup using:
-  - Weighted Focal Loss and mWACC for emotion tasks
-  - CCC loss and MAE for personality regression
-
-## 🧪 Experimental Setup
-
-- Fusion uses frozen or partially fine-tuned encoders from:
-  - `text_trainer`: Jina + Mamba
-  - `audio_trainer`: wav2vec2 + Mamba
-  - `face_trainer`: CNN + Transformer
-  - `body_trainer`: Pose-RNN
-  - `scene_trainer`: Contextual CNN features
-
-- The model was evaluated on:
-  - **CMU-MOSEI** for emotion classification
-  - **ChaLearn First Impressions v2** for personality trait regression
-
-- All reported results (Tables 4–7) in the publication are derived from experiments in this branch.
-
-## ⚡ Inference and Real-Time Compatibility
-
-The fusion model achieves **real-time inference** with **RTA < 1**, enabling deployment in interactive multimodal systems.
+> [Elena Ryumina](https://scholar.google.com/citations?user=DOBkQssAAAAJ), [Alexandr Axyonov](https://scholar.google.com/citations?user=Hs95wd4AAAAJ), Darya Koryakovskaya, Timur Abdulkadirov, Angelina Egorova, Sergey Fedchin, Alexander Zaburdaev, [Dmitry Ryumin](https://scholar.google.com/citations?user=LrTIp5IAAAAJ)  
+> HSE University
 
 ---
 
-> For reproducibility, all hyperparameters, checkpoint paths, and evaluation metrics are included in the branch.  
-> Please cite the original publication if using this branch in academic work.
+## 📌 Overview
+
+The Multimodal Cross-Domain Model integrates predictions and feature embeddings from five modality-specific Unimodal Cross-Domain Models (Face, Body, Scene, Audio, and Text). It leverages advanced multimodal fusion techniques designed specifically for Multitask Emotion and Personality Traits Recognition (MEPTR).
+
+---
+
+## 🔧 Model Components
+
+This branch contains the following model components:
+
+- **Graph Attention Fusion**  
+  Combines embeddings from multiple modalities, modeling inter-modality relationships through learnable graph-based attention mechanisms.
+
+- **Task-Specific Query-Based Multi-Head Cross-Attention Fusion**  
+  Performs task-specific cross-attention, selectively aggregating relevant information across modalities separately for emotion recognition (classification) and personality traits assessment (regression).
+
+- **Task-Specific Predict Projectors**  
+  Project averaged predictions from unimodal models into a shared latent space, facilitating joint multimodal decision-making.
+
+- **Task-Specific Guide Banks**  
+  Sets of learned embeddings representing each class (emotion labels and personality traits). These embeddings help align modality-specific embeddings through cosine similarity.
+
+- **Multitask Joint Optimization**  
+  Simultaneously optimizes multitask predictions using a combined cross-entropy loss (for emotion classification) and mean absolute error loss (for personality traits regression).
+
+---
+
+## 🌿 Input Modality Requirements
+
+To train or evaluate the multimodal model, provide features and predictions from each **Unimodal Cross-Domain Model** (trained independently in separate branches):
+
+- **Face modality**: CLIP embeddings + Mamba temporal encoder (from `face_trainer`)
+- **Body modality**: CLIP embeddings + Mamba temporal encoder (from `body_trainer`)
+- **Scene modality**: CLIP embeddings + Transformer temporal encoder (from `scene_trainer`)
+- **Audio modality**: Wav2Vec2 embeddings + Mamba temporal encoder (from `audio_trainer`)
+- **Text modality**: BGE-en embeddings + Transformer temporal encoder (from `text_trainer`)
