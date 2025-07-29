@@ -1,76 +1,43 @@
-# A Semi-Supervised Multimodal Framework for Multitask Emotion and Personality Traits Recognition Using Cross-Domain Learning
+# `fusion` Branch
 
-This repository accompanies the publication in **Expert Systems with Applications (ESWA), 2025**:
+This branch contains the **final multimodal fusion pipeline** for multitask emotion and personality trait recognition, as proposed in the ESWA 2025 paper.
 
-> [Elena Ryumina](https://scholar.google.com/citations?user=DOBkQssAAAAJ), [Alexandr Axyonov](https://scholar.google.com/citations?user=Hs95wd4AAAAJ), Timur Abdulkadirov, Darya Koryakovskaya, Svetlana Gorovaya, Anna Bykova, Dmitry Vikhorev, [Dmitry Ryumin](https://scholar.google.com/citations?user=LrTIp5IAAAAJ)
-> 
-> HSE University
+## 🧠 Overview
 
----
+The fusion architecture integrates pretrained unimodal encoders (text, audio, face, body, and scene) into a unified multitask prediction framework using:
 
-## 🧠 Abstract
+- **Query-Guided Cross-Modal Decoding**: A shared transformer-based decoder receives task-specific query embeddings and attends over modality-specific encoded representations. The decoder performs inter-modal attention without requiring explicit temporal synchronization.
+  
+- **Guide Banks**: For each modality, we construct learnable latent memory banks that store class-aware modality-level priors. These banks guide the attention mechanism during both training and inference, enabling more robust generalization in low-resource settings.
 
-The growing demand for intelligent human-computer interaction systems has driven the need for personalized solutions. Early research addressed this issue through Emotion Recognition (ER) methods, while current approaches focus on assessing individual Personality Traits (PTs). However, effective systems must integrate both capabilities, requiring large-scale corpora annotated for both tasks, which are currently unavailable. We introduce a semi-supervised multimodal framework for Multitask Emotion and Personality Traits Recognition (MEPTR) with a three-stage learning strategy, combining unimodal single-domain, unimodal cross-domain, and multimodal cross-domain models. We further enhance multimodal fusion by proposing Graph Attention Fusion and Task-Specific Query-Based Multi-Head Cross-Attention Fusion, as well as task-specific Predict Projectors and Guide Banks. This enables the model to effectively integrate heterogeneous and semi-labeled data. The framework is evaluated on two on two large-scale corpora, CMU Multimodal Opinion Sentiment and Emotion Intensity (MOSEI) for emotion recognition and ChaLearn First Impressions v2 corpora (FIv2) for Personality Traits (PTs) assessment, showcasing its potential application in personalized human-computer interaction systems. In single-domain learning, our model achieves mean Average Weighted Accuracy (mWACC) of 70.26 on MOSEI and mean Accuracy (mACC) of 92.88 on FIv2, outperforming state-of-the-art results. In contrast, cross-domain learning demonstrates reduced performance, yielding mWACC of 64.26 on MOSEI and mACC of 92.00 on FIv2. Our results highlight the complexity of both single-domain learning (the problem of overfitting on single-domain) and cross-domain learning (the problem of adapting a model to different domains varying modality informativeness). We also study the relationship between these phenomena, finding that negative emotions, especially Sadness, are negatively correlated with high-level PTs scores, whereas Happiness is positively associated with these levels.
+- **Task-Specific Heads**: Fused representations are passed through separate classification heads for:
+  - **Emotion recognition** (multi-label classification)
+  - **Personality trait regression** (continuous trait prediction)
 
----
+- **Multitask Optimization**: A joint training setup using:
+  - Weighted Focal Loss and mWACC for emotion tasks
+  - CCC loss and MAE for personality regression
 
-## ✨ Highlights
+## 🧪 Experimental Setup
 
-- 📦 **Multitask learning** for simultaneous emotion and personality trait recognition  
-- 🌐 **Cross-domain framework** handling heterogeneous datasets  
-- 🧊 **Modular unimodal encoders** with Mamba/Transformer/GAT backbones  
-- 🔗 **Query-based multimodal fusion** with cross-attention and guide banks  
-- 🧪 **Superior performance** on CMU-MOSEI and ChaLearn v2 under low-label supervision  
-- ⚡ **Real-time inference** (RTA < 1) enabling practical applications  
+- Fusion uses frozen or partially fine-tuned encoders from:
+  - `text_trainer`: Jina + Mamba
+  - `audio_trainer`: wav2vec2 + Mamba
+  - `face_trainer`: CNN + Transformer
+  - `body_trainer`: Pose-RNN
+  - `scene_trainer`: Contextual CNN features
 
----
+- The model was evaluated on:
+  - **CMU-MOSEI** for emotion classification
+  - **ChaLearn First Impressions v2** for personality trait regression
 
-## 🌳 Branch Descriptions
+- All reported results (Tables 4–7) in the publication are derived from experiments in this branch.
 
-| Branch | Description |
-|--------|-------------|
-| `main` | Final training pipeline and evaluation for the ESWA 2025 publication. |
-| `audio_trainer` | Audio modality trainer with Mamba/Transformer-based encoders. |
-| `text_trainer` | Text-only classification pipeline using Jina embeddings and Mamba classifier. |
-| `face_trainer` | Facial expression recognition component, used in fusion. |
-| `body_trainer` | Body posture and movement feature extraction for personality traits. |
-| `scene_trainer` | Scene-aware embeddings via CNN-based encoders for environment context. |
-| `fusion` | Cross-modal fusion models integrating outputs from all modalities. Includes query-heads, graph fusion, and joint optimization pipelines. |
+## ⚡ Inference and Real-Time Compatibility
 
----
-
-## 🏋️‍♂️ Training
-
-The training process consists of **three phases**, implemented across separate branches:
-
-### 1. **Unimodal Pretraining**
-Each modality is trained independently:
-- [`text_trainer`](../tree/text_trainer): text classification with Jina/Mamba.
-- [`audio_trainer`](../tree/audio_trainer): audio classification with wav2vec2 + Mamba.
-- [`face_trainer`](../tree/face_trainer): facial features via CNN + Transformer.
-- [`body_trainer`](../tree/body_trainer): body motion encodings via keypoints and RNNs.
-- [`scene_trainer`](../tree/scene_trainer): scene embeddings using pre-trained CNNs.
-
-### 2. **Cross-Domain Adaptation**
-Model checkpoints are transferred between datasets (e.g., emotion → personality), aligning shared latent representations with **cross-domain losses**.
-
-### 3. **Multimodal Fusion**
-Branch [`fusion`](../tree/fusion) performs:
-- Feature projection and alignment,
-- Guide Bank construction per task,
-- Query-driven attention-based fusion.
+The fusion model achieves **real-time inference** with **RTA < 1**, enabling deployment in interactive multimodal systems.
 
 ---
 
-## 📝 Citation
-
-If you use this work, please cite the following:
-
-```bibtex
-@article{ryumina2025semisupervised,
-  title   = {A Semi-Supervised Multimodal Framework for Multitask Emotion and Personality Traits Recognition Using Cross-Domain Learning},
-  author  = {Ryumina, Elena and Axyonov, Alexandr and Koryakovskaya, Darya and Abdulkadirov, Timur and Egorova, Angelina and Fedchin, Sergey and Zaburdaev, Alexander and Ryumin, Dmitry},
-  journal = {Expert Systems with Applications},
-  year    = {2025},
-  note    = {Under review}
-}
+> For reproducibility, all hyperparameters, checkpoint paths, and evaluation metrics are included in the branch.  
+> Please cite the original publication if using this branch in academic work.
