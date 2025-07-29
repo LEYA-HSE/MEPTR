@@ -29,7 +29,7 @@ The growing demand for intelligent human-computer interaction systems has driven
 
 | Branch | Description |
 |--------|-------------|
-| `main` | Final training pipeline and evaluation for the ESWA 2025 publication. |
+| `main` | Default branch with descriptions for the ESWA 2025 publication. |
 | `audio_trainer` | Audio modality trainer with Mamba/Transformer-based encoders. |
 | `text_trainer` | Text-only classification pipeline using Jina embeddings and Mamba classifier. |
 | `face_trainer` | Facial expression recognition component, used in fusion. |
