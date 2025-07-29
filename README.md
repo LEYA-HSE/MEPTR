@@ -45,17 +45,17 @@ The training process consists of **three phases**, implemented across separate b
 
 ### 1. **Unimodal Pretraining**
 Each modality is trained independently:
-- [`text_trainer`](../tree/text_trainer): text classification with Jina/Mamba.
-- [`audio_trainer`](../tree/audio_trainer): audio classification with wav2vec2 + Mamba.
-- [`face_trainer`](../tree/face_trainer): facial features via CNN + Transformer.
-- [`body_trainer`](../tree/body_trainer): body motion encodings via keypoints and RNNs.
-- [`scene_trainer`](../tree/scene_trainer): scene embeddings using pre-trained CNNs.
+- [`text_trainer`](https://github.com/LEYA-HSE/MEPTR/tree/text_trainer): text classification with Jina/Mamba.
+- [`audio_trainer`](https://github.com/LEYA-HSE/MEPTR/tree/audio_trainer): audio classification with wav2vec2 + Mamba.
+- [`face_trainer`](https://github.com/LEYA-HSE/MEPTR/tree/face_trainer): facial features via CNN + Transformer.
+- [`body_trainer`](https://github.com/LEYA-HSE/MEPTR/tree/body_trainer): body motion encodings via keypoints and RNNs.
+- [`scene_trainer`](https://github.com/LEYA-HSE/MEPTR/tree/scene_trainer): scene embeddings using pre-trained CNNs.
 
 ### 2. **Cross-Domain Adaptation**
 Model checkpoints are transferred between datasets (e.g., emotion → personality), aligning shared latent representations with **cross-domain losses**.
 
 ### 3. **Multimodal Fusion**
-Branch [`fusion`](../tree/fusion) performs:
+Branch [`fusion`](https://github.com/LEYA-HSE/MEPTR/tree/fusion) performs:
 - Feature projection and alignment,
 - Guide Bank construction per task,
 - Query-driven attention-based fusion.
