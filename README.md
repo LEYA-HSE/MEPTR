@@ -70,7 +70,7 @@ Integration of unimodal cross-domain features and predictions into the Multimoda
 If you use this work, please cite the following:
 
 ```bibtex
-@article{ryumina2025semisupervised,
+@article{ryumina2025meptr,
   title   = {A Semi-Supervised Multimodal Framework for Multitask Emotion and Personality Traits Recognition Using Cross-Domain Learning},
   author  = {Ryumina, Elena and Axyonov, Alexandr and Koryakovskaya, Darya and Abdulkadirov, Timur and Egorova, Angelina and Fedchin, Sergey and Zaburdaev, Alexander and Ryumin, Dmitry},
   journal = {Expert Systems with Applications},
