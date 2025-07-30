@@ -3,7 +3,7 @@
 This repository accompanies the publication in **Expert Systems with Applications (ESWA), 2025**:
 
 > [Elena Ryumina](https://scholar.google.com/citations?user=DOBkQssAAAAJ), [Alexandr Axyonov](https://scholar.google.com/citations?user=Hs95wd4AAAAJ), Darya Koryakovskaya, Timur Abdulkadirov, Angelina Egorova, Sergey Fedchin, Alexander Zaburdaev, [Dmitry Ryumin](https://scholar.google.com/citations?user=LrTIp5IAAAAJ)
-> 
+>
 > HSE University
 
 ---
@@ -21,6 +21,14 @@ The growing demand for intelligent human-computer interaction systems has driven
 - A three-stage learning strategy designed to enhance intra- and inter-domain interactions across modalities.
 - Establishment of new baselines on two benchmarks: CMU-MOSEI and ChaLearn First Impressions v2.
 - The framework is designed for personalized human-computer interaction systems.
+
+---
+
+## 🧭 Framework Overview
+
+![MEPTR Pipeline](docs/pipeline.jpg)
+
+<p align="center"><em>Figure: Pipeline of semi-supervised multimodal framework for MEPTR.</em></p>
 
 ---
 
