@@ -28,13 +28,12 @@ The growing demand for intelligent human-computer interaction systems has driven
 
 | Branch | Description |
 |--------|-------------|
-| `main` | Default branch containing general repository information and descriptions corresponding to the ESWA 2025 publication. |
+| `main` | Default branch containing general repository information and descriptions corresponding to the ESWA 2025 publication. Multimodal Cross-Domain Model integrating outputs from all unimodal models, employing Graph Attention Fusion, Task-Specific Query-Based Multi-Head Cross-Attention, Predict Projectors, and Guide Banks.|
 | `audio_trainer` | Implementation of Audio-based Cross-Domain Model using Wav2Vec2 embeddings and Mamba encoders. |
 | `text_trainer` | Implementation of Text-based Cross-Domain Model using BGE-en embeddings and Transformer encoders. |
 | `face_trainer` | Implementation of Face-based Cross-Domain Model using CLIP embeddings and Mamba encoders. |
 | `body_trainer` | Implementation of Body-based Cross-Domain Model using CLIP embeddings and Mamba encoders. |
 | `scene_trainer` | Implementation of Scene-based Cross-Domain Model using CLIP embeddings and Transformer encoders. |
-| `fusion` | Multimodal Cross-Domain Model integrating outputs from all unimodal models, employing Graph Attention Fusion, Task-Specific Query-Based Multi-Head Cross-Attention, Predict Projectors, and Guide Banks. |
 
 ---
 
@@ -55,7 +54,7 @@ Independent training of modality-specific single-domain models (Stage 1):
 Cross-domain adaptation of unimodal models. Each model leverages features and predictions from single-domain training, refined via cross-attention fusion between emotion and personality tasks. (Implemented within each respective modality trainer.)
 
 ### 3. **Multimodal Cross-Domain Training**
-Integration of unimodal cross-domain features and predictions into the Multimodal Cross-Domain Model (`fusion` branch), with the following key components:
+Integration of unimodal cross-domain features and predictions into the Multimodal Cross-Domain Model, with the following key components:
 
 - **Graph Attention Fusion:** integrates multimodal features by modeling inter-modality relationships.
 - **Task-Specific Query-Based Multi-Head Cross-Attention Fusion:** selectively attends to modality-specific embeddings, optimized separately for emotion and personality recognition.
