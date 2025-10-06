@@ -40,7 +40,7 @@ early_stop_on = "test"  # dev или "test" набор для оптимизац
 checkpoint_dir = "checkpoints"
 device = "cuda"           # "cuda" или "cpu", куда грузить модел
 selection_metric = "mean_combo"   # mean_emo или "mF1", "mUAR", "ACC" … mean_combo
-single_task = true
+single_task = false
 
 
 # ---------------------------
@@ -53,19 +53,28 @@ single_task_id = 0
 model_name            = "FusionTransformer" # название модели
 model_stage           = 'fusion' # название этапа personality, emotion, fusion
 per_activation        = "relu"   # sigmoid
-weight_emotion        = 1     # для корректировки лосса эмоций 0.1 при взвешивании классов, 1.0 без взвешивания
-weight_pers           = 1        # для корректировки лосса персональных качеств
-pers_loss_type        = 'mae'    # ccc, mae, mse, rmse_bell, rmse_logcosh, RMGL
-emotion_loss_type     = 'CE'
-flag_emo_weight       = false     # используем веса для дисбаланса эмоциональных классов
 hidden_dim            = 256      # размер скрытого состояния
 num_transformer_heads = 8        # количество attention голов в трансформере
 tr_layer_number       = 5        # количество слоев в трансформере
 positional_encoding   = false    # использовать ли позиционное кодирование
 dropout               = 0.2     # dropout между слоями
 out_features          = 256      # размер финальных признаков перед классификацией
+weight_emotion           = 1.0      # adjust emotion loss (0.1 with class weighting, 1.0 without)
+weight_pers              = 1.0      # adjust personality loss
+ssl_weight_emotion       = 1.0
+ssl_weight_personality   = 0.2
+ssl_confidence_threshold_emo = 0.60
+ssl_confidence_threshold_pt = 0.60
+pers_loss_type        = 'mae'    # options: ccc, mae, mse, rmse_bell, rmse_logcosh, RMGL
+emotion_loss_type     = 'CE'
+flag_emo_weight       = false     # use weights for emotional class imbalance
+alpha_sup = 1.25
+w_lr_sup = 0.01
+alpha_ssl = 1.0
+w_lr_ssl = 0.005
+lambda_ssl= 0.3
+w_floor = 1e-3
 
-# ---------------------------
 # Параметры оптимизатора
 # ---------------------------
 [train.optimizer]

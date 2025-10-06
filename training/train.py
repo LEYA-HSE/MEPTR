@@ -15,7 +15,7 @@ from lion_pytorch import Lion
 from utils.schedulers import SmartScheduler
 from utils.logger_setup import color_metric, color_split
 from utils.measures import mf1, uar, acc_func, ccc
-from utils.losses import MultiTaskLossWithNaN
+from utils.losses import MultiTaskLossWithNaN, MultiTaskLossWithNaN_v2
 from models.models import MultiModalFusionModelWithAblation, SingleTaskSlimModel,SingleTaskAsymModel
 
 
@@ -153,7 +153,6 @@ def train(cfg,
     """
     seed_everything(cfg.random_seed)
     device = cfg.device
-
     # ─── Single-task routing (4 варианта) ─────────────────────────────
     if cfg.single_task:
         #   0: Emo+PKL → Emo     1: Emo → Emo
@@ -272,16 +271,43 @@ def train(cfg,
     )
 
     # --- Loss ---
-    criterion = MultiTaskLossWithNaN(
+    # criterion = MultiTaskLossWithNaN(
+    #     weight_emotion=cfg.weight_emotion,
+    #     weight_personality=cfg.weight_pers,
+    #     emo_weights=(torch.FloatTensor(
+    #         [5.890161, 7.534918, 11.228363, 27.722221,
+    #          1.3049748, 5.6189237, 26.639517]).to(device)
+    #                  if cfg.flag_emo_weight else None),
+    #     personality_loss_type=cfg.pers_loss_type,
+    #     emotion_loss_type=cfg.emotion_loss_type
+    # )
+
+    criterion = MultiTaskLossWithNaN_v2(
+        # какие лоссы использовать
+        personality_loss_type=cfg.pers_loss_type,      # "ccc" | "mae" | "mse" | "bell" | ...
+        emotion_loss_type=cfg.emotion_loss_type,       # "CE" | "BCE"
+
+        # веса классов для эмоций (опционально)
+        emo_weights=(torch.FloatTensor(
+            [5.890161, 7.534918, 11.228363, 27.722221, 1.3049748, 5.6189237, 26.639517]
+        ).to(device) if cfg.flag_emo_weight else None),
+
+        # GradNorm / SSL гиперпараметры
+        alpha_sup=cfg.alpha_sup,
+        w_lr_sup=cfg.w_lr_sup,
+        alpha_ssl=cfg.alpha_ssl,
+        w_lr_ssl=cfg.w_lr_ssl,
+        lambda_ssl=cfg.lambda_ssl,
+        w_floor=cfg.w_floor,
+
+        # пороги уверенности SSL
+        ssl_confidence_threshold_emo=cfg.ssl_confidence_threshold_emo,
+        ssl_confidence_threshold_pt=cfg.ssl_confidence_threshold_pt,
+        # веса задач
         weight_emotion=cfg.weight_emotion,
         weight_personality=cfg.weight_pers,
-        emo_weights=(torch.FloatTensor(
-            [5.890161, 7.534918, 11.228363, 27.722221,
-             1.3049748, 5.6189237, 26.639517]).to(device)
-                     if cfg.flag_emo_weight else None),
-        personality_loss_type=cfg.pers_loss_type,
-        emotion_loss_type=cfg.emotion_loss_type
-    )
+    ).to(device)
+
 
     best_dev, best_test = {}, {}
     best_score  = -float("inf")
@@ -310,20 +336,26 @@ def train(cfg,
             valid_per = ~torch.isnan(per_labels).all(dim=1)
 
             outputs = model(batch)
-            loss = criterion(outputs, {
+            loss_labels = {
                 "emotion": emo_labels,
                 "personality": per_labels,
                 "valid_emo": valid_emo,
-                "valid_per": valid_per
-            })
-            loss.backward()
+                "valid_per": valid_per,
+            }
+            total_task_loss, gn_info = criterion(
+                outputs,
+                loss_labels,
+                model=model,          # нужен для GradNorm
+                return_details=True   # вернёт (тензор лосса, детали)
+            )
+
+            total_task_loss.backward()
             optimizer.step()
             optimizer.zero_grad()
-
             scheduler.step(batch_level=True)
 
-            bs = emo_labels.shape[0]
-            total_loss += loss.item() * bs
+            bs = emo_labels.shape[0]  # у обеих задач одинаковый batch size
+            total_loss += float(total_task_loss.item()) * bs
             total_samples += bs
 
             if outputs['emotion_logits'] is not None and valid_emo.any():
@@ -341,17 +373,48 @@ def train(cfg,
                 total_targets_per.extend(targets_per.cpu().detach().numpy().tolist())
 
         # --- train метрики ---
-        train_loss = total_loss / total_samples
-        if total_targets_emo:                 # <-- ДОБАВИТЬ
-            mF1_train = mf1(total_targets_emo, total_preds_emo)
-            mUAR_train = uar(total_targets_emo, total_preds_emo)
+        train_loss = total_loss / max(1, total_samples)
+
+        # EMO
+        if total_targets_emo:
+            mF1_train = mf1(np.asarray(total_targets_emo), np.asarray(total_preds_emo))
+            mUAR_train = uar(np.asarray(total_targets_emo), np.asarray(total_preds_emo))
+            mean_emo_train = np.mean([mF1_train, mUAR_train])
         else:
-            mF1_train = mUAR_train = float('nan')
-        logging.info(
-            f"[{color_split('TRAIN')}] Loss={train_loss:.4f}, "
-            f"UAR={mUAR_train:.4f}, MF1={mF1_train:.4f}, "
-            f"MEAN={np.mean([mUAR_train, mF1_train]):.4f}"
-        )
+            mF1_train = mUAR_train = mean_emo_train = float('nan')
+
+        # PKL (personality)
+        if total_targets_per:
+            t_per = np.asarray(total_targets_per)
+            p_per = np.asarray(total_preds_per)
+            acc_train = acc_func(t_per, p_per)
+            ccc_vals = []
+            for i in range(t_per.shape[1]):
+                mask = ~np.isnan(t_per[:, i])
+                if mask.sum() == 0:
+                    continue
+                ccc_vals.append(ccc(t_per[mask, i], p_per[mask, i]))
+            ccc_train = float(np.mean(ccc_vals)) if ccc_vals else float('nan')
+            mean_pkl_train = np.nanmean([acc_train, ccc_train])
+        else:
+            acc_train = ccc_train = mean_pkl_train = float('nan')
+
+        sup_w = gn_info.get("weights_sup", {})
+        ssl_w = gn_info.get("weights_ssl", {})
+
+        parts = [
+            f"Loss={train_loss:.4f}",
+            f"EMO: UAR={mUAR_train:.4f} MF1={mF1_train:.4f} MEAN={mean_emo_train:.4f}",
+            f"PKL: ACC={acc_train:.4f} CCC={ccc_train:.4f} MEAN={mean_pkl_train:.4f}",
+            "w_sup[emo/per]=({:.3f}/{:.3f}) | w_ssl[emo/per]=({:.3f}/{:.3f})".format(
+                sup_w.get("emo_sup", float('nan')),
+                sup_w.get("per_sup", float('nan')),
+                ssl_w.get("emo_ssl", float('nan')),
+                ssl_w.get("per_ssl", float('nan')),
+            )
+        ]
+        logging.info(f"[{color_split('TRAIN')}] " + " | ".join(parts))
+
 
         # ── Evaluation ──
         cur_dev = log_and_aggregate_split("Dev", dev_loaders, model, device, cfg)

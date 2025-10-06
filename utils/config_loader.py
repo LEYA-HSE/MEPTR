@@ -26,14 +26,6 @@ class ConfigLoader:
         self.datasets = self.config.get("datasets", {})
 
         # ---------------------------
-        # Пути к синтетическим данным
-        # ---------------------------
-        synthetic_data_cfg = self.config.get("synthetic_data", {})
-        self.use_synthetic_data = synthetic_data_cfg.get("use_synthetic_data", False)
-        self.synthetic_path = synthetic_data_cfg.get("synthetic_path", "E:/MELD_S")
-        self.synthetic_ratio = synthetic_data_cfg.get("synthetic_ratio", 0.0)
-
-        # ---------------------------
         # Модальности и эмоции
         # ---------------------------
         self.modalities = self.config.get("modalities", ["audio"])
@@ -84,11 +76,23 @@ class ConfigLoader:
         self.path_to_saved_emotion_model = train_model.get("path_to_saved_emotion_model", None)
         self.path_to_saved_personality_model = train_model.get("path_to_saved_personality_model", None)
         self.per_activation = train_model.get("per_activation", "sigmoid")
-        self.weight_emotion = train_model.get("weight_emotion", 0.1)
-        self.weight_pers = train_model.get("weight_pers", 1)
+        self.weight_emotion = train_model.get("weight_emotion", 1.0)
+        self.weight_pers = train_model.get("weight_pers", 1.0)
         self.pers_loss_type = train_model.get("pers_loss_type", True)
         self.emotion_loss_type = train_model.get("emotion_loss_type", True)
-        self.flag_emo_weight = train_model.get("flag_emo_weight", "ccc")
+        self.flag_emo_weight = train_model.get("flag_emo_weight", False)
+        self.ssl_weight_emotion = train_model.get("ssl_weight_emotion", 1)
+        self.ssl_weight_personality = train_model.get("ssl_weight_personality", 1)
+        self.ssl_confidence_threshold_emo = train_model.get("ssl_confidence_threshold_emo", 0.6)
+        self.ssl_confidence_threshold_pt = train_model.get("ssl_confidence_threshold_pt", 0.6)
+        self.pers_loss_type = train_model.get("pers_loss_type", "mae")
+        self.emotion_loss_type = train_model.get("emotion_loss_type", "CE")
+        self.alpha_sup = train_model.get("alpha_sup", 1.0)
+        self.w_lr_sup = train_model.get("w_lr_sup", 0.025)
+        self.alpha_ssl = train_model.get("alpha_ssl", 0.5)
+        self.w_lr_ssl = train_model.get("w_lr_ssl", 0.001)
+        self.lambda_ssl = train_model.get("lambda_ssl", 0.2)
+        self.w_floor = train_model.get("w_floor", 1e-3)
         self.hidden_dim = train_model.get("hidden_dim", 256)
         self.hidden_dim_gated = train_model.get("hidden_dim_gated", 256)
         self.num_transformer_heads = train_model.get("num_transformer_heads", 8)

@@ -32,46 +32,6 @@ def _stack_core_feats(feat_dict: dict, modal: str) -> torch.Tensor:
     parts = [feat_dict[k] for k in CORE_KEYS[modal] if k in feat_dict]
     return torch.cat(parts)             # [D_total]
 
-
-# def custom_collate_fn(batch):
-#     # убираем None-образцы
-#     batch = [b for b in batch if b is not None]
-#     if not batch:
-#         return None
-
-#     # --------- собираем features ---------
-#     features = {}          # modality → Tensor([B, D])
-#     metas    = {}          # modality → dict списков «побочных» полей (логиты)
-
-#     # предполагаем, что все образцы имеют одинаковый набор модальностей
-#     modalities = batch[0]["features"].keys()
-
-#     for m in modalities:
-#         # print(m)
-#         core_vecs = []
-#         aux_logits = []
-#         for sample in batch:
-#             core_vecs.append(_stack_core_feats(sample["features"][m], m))
-#             aux_logits.append(sample["features"][m]["emotion_logits"])   # ← если нужно
-
-#         features[m] = torch.stack(core_vecs)          # [B, D]
-#         metas[m]    = {"emotion_logits": torch.stack(aux_logits)}
-
-#     # --------- labels ---------
-#     emo    = [b["labels"]["emotion"]     for b in batch]
-#     person = [b["labels"]["personality"] for b in batch]
-#     emo    = torch.stack(emo)
-#     person = torch.stack(person)
-
-#     return {
-#         "features": features,           # для обучения
-#         "labels":   {
-#             "emotion":     emo,
-#             "personality": person,
-#         },
-#         "meta": metas,                  # можно не использовать в train-цикле
-#     }
-
 def custom_collate_fn(batch):
     # Удаляем None и те, где хоть одна модальность отсутствует
     filtered_batch = []
