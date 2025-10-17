@@ -16,6 +16,12 @@ class ConfigLoader:
         self.config = toml.load(config_path)
 
         # ---------------------------
+        # General parameters
+        # ---------------------------
+        general_cfg = self.config.get("general", {})
+        self.use_telegram = general_cfg.get("use_telegram", False)
+
+        # ---------------------------
         # Общие параметры
         # ---------------------------
         self.split = self.config.get("split", "train")
@@ -97,7 +103,7 @@ class ConfigLoader:
         self.hidden_dim_gated = train_model.get("hidden_dim_gated", 256)
         self.num_transformer_heads = train_model.get("num_transformer_heads", 8)
         self.num_graph_heads = train_model.get("num_graph_heads", 8)
-        self.tr_layer_number = train_model.get("tr_layer_number", 1)
+        self.tr_layer_number = train_model.get("tr_layer_number", 5)
         self.mamba_d_state = train_model.get("mamba_d_state", 16)
         self.mamba_ker_size = train_model.get("mamba_ker_size", 4)
         self.mamba_layer_number = train_model.get("mamba_layer_number", 3)

@@ -449,9 +449,7 @@ class MultiTaskLossWithNaN_v2(nn.Module):
             raise ValueError(f"Unknown emotion_loss_type: {emotion_loss_type}")
 
         # --- конфигурация персоналити ---
-        # Эти классы должны быть определены в твоём файле (как и раньше):
-        # CCCLoss, MAELoss, MSELoss, BellLoss, LogCosh, GL, RMSE,
-        # RMBell, RMLCosh, RMGL, RMBellLCosh, RMBellGL, BellLCosh, BellGL, BellLCoshGL, LogCoshGL
+
         loss_types = {
             "ccc": CCCLoss(eps=eps),
             "mae": MAELoss(), "mse": MSELoss(),
@@ -478,7 +476,6 @@ class MultiTaskLossWithNaN_v2(nn.Module):
         self.lambda_ssl = float(lambda_ssl)
         self.w_floor = float(w_floor)
 
-        # бюджеты пропорциональны числу задач
         self.budget_sup = 2.0
         self.budget_ssl = 2.0 * self.lambda_ssl
 
@@ -703,3 +700,374 @@ class MultiTaskLossWithNaN_v2(nn.Module):
             "budget_ssl": self.budget_ssl,
         }
         return total, details
+
+
+class MultiTaskLossWithNaN_v2_FLAGGED(nn.Module):
+
+    SUP_KEYS = ["emo_sup", "per_sup"]
+    SSL_KEYS = ["emo_ssl", "per_ssl"]
+
+    def __init__(
+        self,
+        # ---- базовые supervised веса (используются также как старт для GradNorm SUP) ----
+        weight_emotion: float = 1.0,
+        weight_personality: float = 1.0,
+
+        # ---- типы лоссов ----
+        emo_weights=None,
+        personality_loss_type: str = "ccc",
+        emotion_loss_type: str = "BCE",
+
+        # ---- гиперпараметры для некоторых персоналити-лоссов ----
+        eps: float = 1e-8,
+        lam_gl: float = 1.0,
+        eps_gl: float = 600,
+        sigma_gl: float = 8,
+
+        # ---- SSL параметры ----
+        enable_emotion_ssl: bool = True,
+        ssl_weight_emotion: float = 0.2,
+        ssl_confidence_threshold_emo: float = 0.80,
+
+        enable_personality_ssl: bool = True,
+        ssl_weight_personality: float = 0.2,
+        ssl_confidence_threshold_pt: float = 0.60,   # confident если >thr или <(1-thr)
+
+        # ---- GradNorm «кошельки» (как в v2) ----
+        enable_gradnorm: bool = True,   # True -> как v2; False -> статический микс
+        alpha_sup: float = 1.25,
+        w_lr_sup: float = 0.025,
+        alpha_ssl: float = 0.75,
+        w_lr_ssl: float = 0.001,
+        lambda_ssl: float = 0.2,        # стартовые веса SSL-кошельков
+        w_floor: float = 1e-3,
+
+        # ---- Паритет форматов таргетов и логирование ----
+        enforce_target_parity: bool = True,
+        enable_details: bool = False,
+    ):
+        super().__init__()
+
+        self.eps = float(eps)
+
+        # ===== EMOTION =====
+        self.emotion_loss_type = emotion_loss_type
+        if emotion_loss_type == "CE":
+            self.emotion_loss = nn.CrossEntropyLoss(weight=emo_weights)
+        elif emotion_loss_type == "BCE":
+            self.emotion_loss = nn.BCEWithLogitsLoss(weight=emo_weights)
+        else:
+            raise ValueError(f"Unknown emotion_loss_type: {emotion_loss_type}")
+
+        # ===== PERSONALITY =====
+        loss_types = {
+            "ccc": CCCLoss(eps=eps),
+            "mae": MAELoss(), "mse": MSELoss(),
+            "bell": BellLoss(), "logcosh": LogCosh(),
+            "gl": GL(lam=lam_gl, eps=eps_gl, sigma=sigma_gl),
+            "rmse": RMSE(), "rmse_bell": RMBell(), "rmse_logcosh": RMLCosh(), "rmse_gl": RMGL(lam=lam_gl, eps=eps_gl, sigma=sigma_gl),
+            "rmse_bell_logcosh": RMBellLCosh(), "rmse_bell_gl": RMBellGL(lam=lam_gl, eps=eps_gl, sigma=sigma_gl),
+            "bell_logcosh": BellLCosh(), "bell_gl": BellGL(lam=lam_gl, eps=eps_gl, sigma=sigma_gl),
+            "bell_logcosh_gl": BellLCoshGL(), "logcosh_gl": LogCoshGL(lam=lam_gl, eps=eps_gl, sigma=sigma_gl),
+        }
+        if personality_loss_type not in loss_types:
+            raise ValueError(f"Unknown personality_loss_type: {personality_loss_type}")
+        self.personality_loss_type = personality_loss_type
+        self.personality_loss = loss_types[personality_loss_type]
+
+        # ===== FLAGS / HYPERS =====
+        self.enforce_target_parity = bool(enforce_target_parity)
+        self.enable_details = bool(enable_details)
+
+        self.enable_emotion_ssl = bool(enable_emotion_ssl)
+        self.ssl_weight_emotion = float(ssl_weight_emotion)
+        self.ssl_confidence_threshold_emo = float(ssl_confidence_threshold_emo)
+
+        self.enable_personality_ssl = bool(enable_personality_ssl)
+        self.ssl_weight_personality = float(ssl_weight_personality)
+        self.ssl_confidence_threshold_pt = float(ssl_confidence_threshold_pt)
+
+        self.enable_gradnorm = bool(enable_gradnorm)
+
+        # статические веса (когда GradNorm выключен)
+        self.static_weight_emo_sup = float(weight_emotion)
+        self.static_weight_per_sup = float(weight_personality)
+
+        # GradNorm настройки и инициализация (как в v2)
+        self.alpha_sup = float(alpha_sup)
+        self.w_lr_sup = float(w_lr_sup)
+        self.alpha_ssl = float(alpha_ssl)
+        self.w_lr_ssl = float(w_lr_ssl)
+        self.lambda_ssl = float(lambda_ssl)
+        self.w_floor = float(w_floor)
+
+        if self.enable_gradnorm:
+            # бюджеты как в v2
+            self.budget_sup = 2.0
+            self.budget_ssl = 2.0 * self.lambda_ssl
+
+            # кошельки весов (обучаемые параметры)
+            self.weight_sup = nn.ParameterDict({
+                "emo_sup": nn.Parameter(torch.tensor(self.static_weight_emo_sup, dtype=torch.float32)),
+                "per_sup": nn.Parameter(torch.tensor(self.static_weight_per_sup, dtype=torch.float32)),
+            })
+            self.weight_ssl = nn.ParameterDict({
+                "emo_ssl": nn.Parameter(torch.tensor(self.lambda_ssl, dtype=torch.float32)),
+                "per_ssl": nn.Parameter(torch.tensor(self.lambda_ssl, dtype=torch.float32)),
+            })
+
+            self._normalize(self.weight_sup, self.SUP_KEYS, self.budget_sup)
+            self._normalize(self.weight_ssl, self.SSL_KEYS, self.budget_ssl)
+
+            # стартовые значения лоссов Li(0) для нормировки
+            self.init_sup = {}
+            self.init_ssl = {}
+
+    # ====================== helpers (оставлены внутри класса) ======================
+    @staticmethod
+    def _to_onehot(indices: torch.Tensor, num_classes: int) -> torch.Tensor:
+        return F.one_hot(indices, num_classes=num_classes).float()
+
+    @staticmethod
+    def _binarize_with_nan(x: torch.Tensor, threshold=0.0):
+        mask = ~torch.isnan(x)
+        out = torch.zeros_like(x)
+        out[mask] = (x[mask] > threshold).float()
+        return out
+
+    @staticmethod
+    def _normalize(pdict: nn.ParameterDict, keys, target_sum: float):
+        with torch.no_grad():
+            s = sum(pdict[k] for k in keys)
+            sval = s.detach().clamp_min(1e-8)
+            for k in keys:
+                pdict[k].data = target_sum * (pdict[k].data / sval)
+
+    @staticmethod
+    def _shared_params_from_model(model: nn.Module):
+        # как в v2: «shared» это всё, что не принадлежит головам с подстроками "emotion" и "personality"
+        return [p for name, p in model.named_parameters()
+                if ("emotion" not in name and "personality" not in name)]
+
+    @staticmethod
+    def _mean_abs_norm(grads):
+        vecs = [g.detach().flatten() for g in grads if g is not None]
+        if not vecs:
+            return None
+        return torch.norm(torch.cat(vecs), p=2)
+
+    @staticmethod
+    def _safe_detach(x):
+        return x.detach() if isinstance(x, torch.Tensor) else torch.tensor(float(x))
+
+    @staticmethod
+    def _device_from(outputs):
+        for v in outputs.values():
+            if isinstance(v, torch.Tensor):
+                return v.device
+        return torch.device("cpu")
+
+    def _prepare_emotion_targets(self, y_emo):
+        if not self.enforce_target_parity:
+            return y_emo
+        if self.emotion_loss_type == "BCE":
+            # как в v2: бинаризация с NaN
+            return self._binarize_with_nan(y_emo, threshold=0.0)
+        else:  # CE
+            return (y_emo.argmax(dim=1) if y_emo.dim() > 1 else y_emo.long())
+
+    # ==================== сбор компонент (точно как в v2) ====================
+    def _collect_components(self, outputs, labels):
+        comps = {}
+
+        # ----- Supervised: EMOTION -----
+        pred_emotions = outputs.get("emotion_logits", None)
+        mask_valid_emo = labels.get("valid_emo", None)
+        if pred_emotions is not None:
+            if mask_valid_emo is None:
+                y_emo = labels["emotion"]; pred_emo_sup = pred_emotions; any_sup = True
+            else:
+                any_sup = mask_valid_emo.any()
+                if any_sup:
+                    y_emo = labels["emotion"][mask_valid_emo]
+                    pred_emo_sup = pred_emotions[mask_valid_emo]
+
+            if mask_valid_emo is None or any_sup:
+                target_emo = self._prepare_emotion_targets(y_emo)
+                comps["emo_sup"] = self.emotion_loss(pred_emo_sup, target_emo)
+
+        # ----- SSL: EMOTION -----
+        if (self.enable_emotion_ssl and self.ssl_weight_emotion > 0.0
+                and pred_emotions is not None and mask_valid_emo is not None):
+            unlabeled_mask = ~mask_valid_emo
+            if unlabeled_mask.any():
+                pred_emo_unl = pred_emotions[unlabeled_mask]
+                if self.emotion_loss_type == "BCE":
+                    probs = torch.sigmoid(pred_emo_unl)
+                    conf, pseudo_idx = torch.max(probs, dim=1)
+                    confident = conf > self.ssl_confidence_threshold_emo
+                    if confident.any():
+                        pred_conf = pred_emo_unl[confident]
+                        num_classes = pred_conf.size(1)
+                        pseudo_1h = self._to_onehot(pseudo_idx[confident], num_classes)
+                        comps["emo_ssl"] = self.emotion_loss(pred_conf, pseudo_1h)
+                else:
+                    probs = torch.softmax(pred_emo_unl, dim=1)
+                    conf, pseudo_idx = torch.max(probs, dim=1)
+                    confident = conf > self.ssl_confidence_threshold_emo
+                    if confident.any():
+                        pred_conf = pred_emo_unl[confident]
+                        comps["emo_ssl"] = self.emotion_loss(pred_conf, pseudo_idx[confident])
+
+        # ----- Supervised: PERSONALITY -----
+        pred_traits = outputs.get("personality_scores", None)
+        mask_valid_per = labels.get("valid_per", None)
+        if pred_traits is not None:
+            if mask_valid_per is None:
+                y_per = labels["personality"]; pred_per_sup = pred_traits; any_sup = True
+            else:
+                any_sup = mask_valid_per.any()
+                if any_sup:
+                    y_per = labels["personality"][mask_valid_per]
+                    pred_per_sup = pred_traits[mask_valid_per]
+
+            if mask_valid_per is None or any_sup:
+                if self.personality_loss_type == "ccc":
+                    loss_sum = 0.0; valid_dims = 0
+                    for i in range(y_per.shape[1]):
+                        dim_mask = ~torch.isnan(y_per[:, i])
+                        if dim_mask.any():
+                            loss_sum = loss_sum + self.personality_loss(y_per[dim_mask, i], pred_per_sup[dim_mask, i])
+                            valid_dims += 1
+                    if valid_dims > 0:
+                        comps["per_sup"] = loss_sum / valid_dims   # как в v2: среднее по доступным трейтам
+                else:
+                    comps["per_sup"] = self.personality_loss(y_per, pred_per_sup)
+
+        # ----- SSL: PERSONALITY (v2/v3 одинаковая идея порога) -----
+        if (self.enable_personality_ssl and self.ssl_weight_personality > 0.0
+                and pred_traits is not None and mask_valid_per is not None):
+            unlabeled_mask = ~mask_valid_per
+            if unlabeled_mask.any():
+                preds_unl = torch.clamp(pred_traits[unlabeled_mask], 0.0, 1.0)  # важно для BCE
+                pseudo = (preds_unl > 0.5).float()
+                thr = self.ssl_confidence_threshold_pt
+                confident = (preds_unl > thr) | (preds_unl < (1.0 - thr))
+                tot = confident.sum().float()
+                if tot > 0:
+                    bce_per_elem = F.binary_cross_entropy(preds_unl, pseudo, reduction="none")
+                    weighted = (bce_per_elem * confident.float()).sum()
+                    comps["per_ssl"] = weighted / tot
+
+        return comps
+
+    # ==================== GradNorm обновление (как в v2) ====================
+    def _gradnorm_update_wallet(self, comps, keys, init_dict, weight_pdict, alpha, w_lr, budget, shared_params):
+        # зафиксировать стартовые значения Li(0)
+        for key in keys:
+            Li = comps.get(key, None)
+            if (Li is not None) and (key not in init_dict) and torch.isfinite(Li).all():
+                init_dict[key] = Li.detach().clamp_min(1e-8)
+
+        active = [k for k in keys if (k in comps) and (k in init_dict)]
+        if not active:
+            return
+
+        G_list, r_list, w_list = [], [], []
+        for key in active:
+            Li = comps[key]
+            grads = torch.autograd.grad(Li, shared_params, retain_graph=True, allow_unused=True)
+            gnorm = self._mean_abs_norm(grads) or torch.tensor(0.0, device=Li.device)
+            wk = weight_pdict[key]
+            G_list.append(wk * gnorm)
+            r_list.append((Li.detach().clamp_min(1e-8) / init_dict[key]))
+            w_list.append(wk)
+
+        G = torch.stack(G_list); r = torch.stack(r_list)
+        G_avg, r_avg = G.mean(), r.mean()
+
+        gn_loss = 0.0
+        for i, _ in enumerate(active):
+            target = (G_avg * ((r[i] / r_avg) ** alpha)).detach()
+            gn_loss = gn_loss + torch.abs(G[i] - target)
+
+        grads_w = torch.autograd.grad(gn_loss, w_list, retain_graph=True, allow_unused=True)
+
+        with torch.no_grad():
+            for wk, gw in zip(w_list, grads_w):
+                if gw is None:
+                    continue
+                wk.data -= w_lr * gw
+                wk.data.clamp_(min=self.w_floor)
+
+            self._normalize(weight_pdict, active, budget)
+
+    # ============================== forward ===============================
+    def forward(self, outputs, labels, model=None, shared_params=None, return_details=True):
+        comps = self._collect_components(outputs, labels)
+
+        if not comps:
+            device = self._device_from(outputs)
+            zero = torch.tensor(0.0, requires_grad=True, device=device)
+            return (zero, {}) if (return_details and self.enable_details) else zero
+
+        # --- режим как v2: GradNorm и «кошельки» ---
+        if self.enable_gradnorm:
+            if shared_params is None:
+                if model is None:
+                    raise ValueError("Pass either `model` or `shared_params` when enable_gradnorm=True.")
+                shared_params = self._shared_params_from_model(model)
+
+            # SUP и SSL кошельки (как v2)
+            self._gradnorm_update_wallet(
+                comps, self.SUP_KEYS, getattr(self, "init_sup", {}),
+                self.weight_sup, self.alpha_sup, self.w_lr_sup,
+                getattr(self, "budget_sup", 2.0), shared_params
+            )
+            self._gradnorm_update_wallet(
+                comps, self.SSL_KEYS, getattr(self, "init_ssl", {}),
+                self.weight_ssl, self.alpha_ssl, self.w_lr_ssl,
+                getattr(self, "budget_ssl", 2.0 * self.lambda_ssl), shared_params
+            )
+
+            total = 0.0
+            for k in self.SUP_KEYS:
+                if k in comps:
+                    total = total + self.weight_sup[k].detach() * comps[k]
+            for k in self.SSL_KEYS:
+                if k in comps:
+                    total = total + self.weight_ssl[k].detach() * comps[k]
+
+            if return_details and self.enable_details:
+                details = {
+                    "components": {k: float(self._safe_detach(v)) for k, v in comps.items()},
+                    "weights_sup": {k: float(self._safe_detach(self.weight_sup[k])) for k in self.SUP_KEYS},
+                    "weights_ssl": {k: float(self._safe_detach(self.weight_ssl[k])) for k in self.SSL_KEYS},
+                }
+                return total, details
+            return total
+
+        # --- статический режим (v3-стиль суммирования фикс. весами) ---
+        total = 0.0
+        if "emo_sup" in comps:
+            total = total + self.static_weight_emo_sup * comps["emo_sup"]
+        if "per_sup" in comps:
+            total = total + self.static_weight_per_sup * comps["per_sup"]
+        if "emo_ssl" in comps and self.enable_emotion_ssl and self.ssl_weight_emotion > 0.0:
+            total = total + self.ssl_weight_emotion * comps["emo_ssl"]
+        if "per_ssl" in comps and self.enable_personality_ssl and self.ssl_weight_personality > 0.0:
+            total = total + self.ssl_weight_personality * comps["per_ssl"]
+
+        if return_details and self.enable_details:
+            details = {
+                "components": {k: float(self._safe_detach(v)) for k, v in comps.items()},
+                "weights_static": {
+                    "emo_sup": float(self.static_weight_emo_sup),
+                    "per_sup": float(self.static_weight_per_sup),
+                    "emo_ssl": float(self.ssl_weight_emotion),
+                    "per_ssl": float(self.ssl_weight_personality),
+                },
+            }
+            return total, details
+
+        return total

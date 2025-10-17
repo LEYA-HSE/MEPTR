@@ -3,6 +3,7 @@ import logging
 import os
 import shutil
 import datetime
+import requests
 import toml
 # os.environ["HF_HOME"] = "models"
 from torch.utils.data import ConcatDataset, DataLoader
@@ -19,6 +20,46 @@ from modalities.audio.feature_extractor import PretrainedAudioEmbeddingExtractor
 from modalities.text.feature_extractor import PretrainedTextEmbeddingExtractor
 
 from training.train import train
+
+
+# ───────────────────── optionally load .env ─────────────────────
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
+# ───────────────────── Telegram helper ─────────────────────
+def _notify_telegram(text: str, enabled: bool = True) -> bool:
+    """Sends a message to TG if enabled and TELEGRAM_BOT_TOKEN/CHAT_ID are set.
+       Returns True/False and logs the reason for silence."""
+    if not enabled:
+        logging.info("TG notify: disabled by config")
+        return False
+    token   = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        logging.info("TG notify: skipped (no TELEGRAM_BOT_TOKEN/CHAT_ID)")
+        return False
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            timeout=8,
+        )
+        # Log what Telegram responded with
+        try:
+            payload = r.json()
+        except Exception:
+            payload = {"raw": r.text}
+        if r.ok and isinstance(payload, dict) and payload.get("ok"):
+            logging.info("TG notify: sent")
+            return True
+        logging.warning(f"TG notify: API error {r.status_code} -> {payload}")
+        return False
+    except Exception as e:
+        logging.warning(f"TG notify failed: {e}")
+        return False
 
 def main():
     # ──────────────────── 1. Конфиг и директории ────────────────────
@@ -39,6 +80,12 @@ def main():
     log_file = os.path.join(results_dir, "session_log.txt")
     setup_logger(logging.INFO, log_file=log_file)
     base_config.show_config()
+
+    use_tg = base_config.use_telegram
+    logging.info(f"use_telegram = {use_tg}  (env token={bool(os.getenv('TELEGRAM_BOT_TOKEN'))}, chat={bool(os.getenv('TELEGRAM_CHAT_ID'))})")
+
+    # startup ping — handy to confirm everything is connected
+    _notify_telegram(f"🚀 Start: <b>{model_name}</b>\n📁 {results_dir}", enabled=use_tg)
 
     shutil.copy("config.toml", os.path.join(results_dir, "config_copy.toml"))
     overrides_file = os.path.join(results_dir, "overrides.txt")
@@ -144,14 +191,6 @@ def main():
         collate_fn=sample_loader.collate_fn
     )
 
-    # ──────────────── запускаем supra-modal training ─────────────────────
-
-    # train(cfg=base_config,
-    #             mm_loader     = union_train_loader,
-    #             dev_loaders   = dev_loaders,
-    #             test_loaders  = test_loaders
-    #         )
-
     # ──────────────────── 6. Поиск гиперпараметров / одиночный run ──
     search_config = toml.load("search_params.toml")
     param_grid = dict(search_config["grid"])
@@ -179,6 +218,10 @@ def main():
             overrides_file = overrides_file,
             param_grid     = param_grid,
         )
+        _notify_telegram(
+            f"✅ <b>{model_name}</b>: exhaustive search finished\n📁 {results_dir}",
+            enabled=use_tg
+        )
 
     elif base_config.search_type == "none":
         logging.info("== Режим одиночной тренировки (без поиска параметров) ==")
@@ -198,4 +241,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        # crash notification always goes out so you know everything burned down
+        _notify_telegram(
+            f"❌ Crash: <code>{type(e).__name__}</code>\n{e}",
+            enabled=True
+        )
+        raise

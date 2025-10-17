@@ -1,6 +1,32 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import copy
+from .layers.layer1 import GraphAttentionLayer_v1
+from .layers.layer2 import GraphAttentionLayer_v2
+from .layers.layer3 import GraphAttentionLayer_v3
+from .layers.layer4 import GraphAttentionLayer_v4
+
+from .attention.crossmpt.Model_CrossMPT import (
+    MultiHeadedAttention,
+    PositionwiseFeedForward,
+    Encoder,
+    EncoderLayer,
+)
+
+# Bidirectional Attention
+# from .attention.bidirectional_cross_attention import BidirectionalCrossAttention
+# # Forgetting Attention
+# from .attention.forgetting_attention import forgetting_attention
+# # Multi-Token Attention
+# from .attention.mta_transformer import Attention
+# from .attention.lingua.transformer import (
+#     FeedForward,
+#     InitStdFactor,
+#     RotaryEmbedding,
+#     apply_rotary_emb,
+#     repeat_kv,
+# )
 
 class ModalityProjector(nn.Module):
     def __init__(self, in_dim, out_dim, dropout=0.1):
@@ -127,12 +153,20 @@ class MultiModalFusionModelWithAblation(nn.Module):
 
         if not self.disable_graph_attn:
             self.graph_attn = GraphAttentionLayer(hidden_dim, dropout=dropout)
+            # self.graph_attn = GraphAttentionLayer_v4(hidden_dim, dropout=dropout)
 
         self.emo_query = nn.Parameter(torch.randn(1, 1, hidden_dim))
         self.pkl_query = nn.Parameter(torch.randn(1, 1, hidden_dim))
 
         if not self.disable_cross_attn:
             self.cross_attn = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=num_heads, dropout=dropout, batch_first=True)
+
+            # cross mpt
+            # c = copy.deepcopy
+            # attn = MultiHeadedAttention(num_heads, hidden_dim)
+            # ff = PositionwiseFeedForward(hidden_dim, hidden_dim * 4, dropout)
+            # self.cross_emo = Encoder(EncoderLayer(hidden_dim, c(attn), c(ff), dropout), 1)
+            # self.cross_pkl = Encoder(EncoderLayer(hidden_dim, c(attn), c(ff), dropout), 1)
 
         self.emo_head = nn.Linear(hidden_dim, emo_out_dim)
         self.pkl_head = nn.Linear(hidden_dim, pkl_out_dim)
@@ -182,6 +216,13 @@ class MultiModalFusionModelWithAblation(nn.Module):
             pkl_repr, _ = self.cross_attn(pkl_q, context, context)
             emo_repr = emo_repr.squeeze(1)
             pkl_repr = pkl_repr.squeeze(1)
+
+            # # cross mpt
+            # emb1_e, emb2_e = self.cross_emo(emo_q, context, None, None)   # [B,1,D], [B,N,D]
+            # emo_repr = torch.cat([emb1_e, emb2_e], dim=1).mean(dim=1)     # [B,D]
+
+            # emb1_p, emb2_p = self.cross_pkl(pkl_q, context, None, None)   # [B,1,D], [B,N,D]
+            # pkl_repr = torch.cat([emb1_p, emb2_p], dim=1).mean(dim=1)     # [B,D]
 
         emo_logit_feats = []
         per_logit_feats = []

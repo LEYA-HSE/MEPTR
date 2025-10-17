@@ -1,3 +1,8 @@
+[general]
+# for the bot create a .env file and install
+# pip install python-dotenv
+# inside the file specify the TG token and your chat ID (how to create a bot and get your chat ID - google it)
+use_telegram = true # Telegram notifications (you’ll need to provide your tokens)
 # ---------------------------
 # Настройки корпусов данных
 # ---------------------------
@@ -55,7 +60,6 @@ model_stage           = 'fusion' # название этапа personality, emot
 per_activation        = "relu"   # sigmoid
 hidden_dim            = 256      # размер скрытого состояния
 num_transformer_heads = 8        # количество attention голов в трансформере
-tr_layer_number       = 5        # количество слоев в трансформере
 positional_encoding   = false    # использовать ли позиционное кодирование
 dropout               = 0.2     # dropout между слоями
 out_features          = 256      # размер финальных признаков перед классификацией
@@ -63,16 +67,16 @@ weight_emotion           = 1.0      # adjust emotion loss (0.1 with class weight
 weight_pers              = 1.0      # adjust personality loss
 ssl_weight_emotion       = 1.0
 ssl_weight_personality   = 0.2
-ssl_confidence_threshold_emo = 0.60
-ssl_confidence_threshold_pt = 0.60
+ssl_confidence_threshold_emo = 0.6
+ssl_confidence_threshold_pt = 0.6
 pers_loss_type        = 'mae'    # options: ccc, mae, mse, rmse_bell, rmse_logcosh, RMGL
 emotion_loss_type     = 'CE'
 flag_emo_weight       = false     # use weights for emotional class imbalance
-alpha_sup = 1.25
-w_lr_sup = 0.01
-alpha_ssl = 1.0
-w_lr_ssl = 0.005
-lambda_ssl= 0.3
+alpha_sup = 1.0
+w_lr_sup = 0.005
+alpha_ssl = 1.5
+w_lr_ssl = 0.01
+lambda_ssl= 0.4
 w_floor = 1e-3
 
 # Параметры оптимизатора
